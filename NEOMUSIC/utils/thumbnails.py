@@ -2,23 +2,19 @@ import os
 import aiofiles
 import aiohttp
 import logging
-import re
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 from youtubesearchpython.__future__ import VideosSearch
 from config import YOUTUBE_IMG_URL
 from NEOMUSIC import app
 
+# Logging
 logging.basicConfig(level=logging.ERROR)
 
 CACHE_DIR = "cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
 
-# Function to remove special characters that fonts can't read
-def clean_text(text):
-    return re.sub(r'[^\x00-\x7f\u0900-\u097F]+', '', text) # Supports English & Hindi
-
 async def get_thumb(videoid: str) -> str:
-    cache_path = os.path.join(CACHE_DIR, f"{videoid}_final_neon.png")
+    cache_path = os.path.join(CACHE_DIR, f"{videoid}_futuristic.png")
     if os.path.exists(cache_path):
         return cache_path
 
@@ -28,7 +24,7 @@ async def get_thumb(videoid: str) -> str:
         data = results_data["result"][0]
         title = data.get("title", "Unknown Track")
         thumbnail = data.get("thumbnails", [{}])[0].get("url", YOUTUBE_IMG_URL)
-        artist = data.get("channel", {}).get("name", "Neo Music Bot")
+        artist = data.get("channel", {}).get("name", "Various Artists")
     except:
         title, thumbnail, artist = "Music Track", YOUTUBE_IMG_URL, "Neo Music"
 
@@ -40,75 +36,87 @@ async def get_thumb(videoid: str) -> str:
                     await f.write(await resp.read())
 
     try:
-        # 1. CANVAS & BACKGROUND
-        img = Image.open(temp_path).convert("RGBA")
-        bg = img.resize((1280, 720))
-        bg = bg.filter(ImageFilter.GaussianBlur(50))
-        bg = ImageEnhance.Brightness(bg).enhance(0.3)
+        # 1. CANVAS SETUP
+        width, height = 1280, 720
+        yt_img = Image.open(temp_path).convert("RGBA")
+        
+        # 2. DARK THEME BACKGROUND
+        # Background ko blur aur dark karke Tesla dashboard jaisa look dena
+        bg = yt_img.resize((width, height))
+        bg = bg.filter(ImageFilter.GaussianBlur(80))
+        bg = ImageEnhance.Brightness(bg).enhance(0.2)
         draw = ImageDraw.Draw(bg)
 
-        # 2. MAIN SQUARE IMAGE (LEFT)
-        sq_size = 450
-        main_img = ImageOps.fit(img, (sq_size, sq_size), method=Image.Resampling.LANCZOS)
+        # 3. CIRCULAR MUSIC ART (LEFT SIDE)
+        circle_size = 400
+        # Rounded mask for circle
+        mask = Image.new("L", (circle_size, circle_size), 0)
+        mask_draw = ImageDraw.Draw(mask)
+        mask_draw.ellipse((0, 0, circle_size, circle_size), fill=255)
         
-        # Purple Neon Glow Effect
-        for i in range(12, 0, -1):
-            alpha = int(255 * (1 - i/12) * 0.5)
-            draw.rectangle([115-i, 135-i, 115+sq_size+i, 135+sq_size+i], outline=(191, 0, 255, alpha), width=2)
+        main_img = ImageOps.fit(yt_img, (circle_size, circle_size), method=Image.Resampling.LANCZOS)
         
-        bg.paste(main_img, (115, 135))
-        draw.rectangle([115, 135, 115+sq_size, 135+sq_size], outline=(224, 0, 255, 255), width=6)
+        # Disc Glow Effect (Metallic Ring)
+        for i in range(25, 0, -2):
+            alpha = int(100 * (1 - i/25))
+            draw.ellipse([150-i, 160-i, 150+circle_size+i, 160+circle_size+i], outline=(255, 255, 255, alpha), width=2)
+        
+        bg.paste(main_img, (150, 160), mask)
 
-        # 3. FONTS SETUP (Important Fix for Boxes)
-        # Tip: Use 'arial.ttf' or 'NotoSans-Bold.ttf' for better language support
-        font_p = "NEOMUSIC/assets/thumb/font.ttf"
+        # 4. FONTS SETUP
+        font_path = "NEOMUSIC/assets/thumb/font.ttf" # Use a clean Sans font like Roboto/Montserrat
         try:
-            # Agar aapke paas stylish font hai toh yahan naam badlein
-            logo_font = ImageFont.truetype(font_p, 100) 
-            title_font = ImageFont.truetype(font_p, 50)
-            artist_font = ImageFont.truetype(font_p, 35)
-            ui_font = ImageFont.truetype(font_p, 24)
+            title_f = ImageFont.truetype(font_path, 65)
+            artist_f = ImageFont.truetype(font_path, 35)
+            small_f = ImageFont.truetype(font_path, 20)
+            icon_f = ImageFont.truetype(font_path, 45) # For symbols
         except:
-            logo_font = title_font = artist_font = ui_font = ImageFont.load_default()
+            title_f = artist_f = small_f = icon_f = ImageFont.load_default()
 
-        # 4. TEXT RENDERING (RIGHT SIDE)
-        x_pos = 650
+        # 5. TEXT (RIGHT SIDE)
+        # Song Title
+        clean_title = title[:25] + ".." if len(title) > 25 else title
+        draw.text((650, 180), clean_title, fill=(255, 255, 255, 240), font=title_f)
         
-        # Logo Text
-        draw.text((x_pos, 80), "Music.", fill=(255, 255, 255, 255), font=logo_font)
+        # Artist Name
+        draw.text((650, 260), artist.upper(), fill=(180, 180, 180, 200), font=artist_f)
 
-        # Title Fix (Cleaning and Truncating)
-        title_text = clean_text(title.upper())
-        if len(title_text) > 25: title_text = title_text[:22] + "..."
-        draw.text((x_pos, 220), title_text, fill=(255, 255, 255, 255), font=title_font)
+        # Lyrics Placeholder (Dotted lines style like the image)
+        lyric_y = 380
+        lyrics = ["Tell me one good reason why I should try", "Continuing to fight it", "Running in circle round and round"]
+        for line in lyrics:
+            draw.text((650, lyric_y), line, fill=(150, 150, 150, 150), font=small_f)
+            lyric_y += 40
 
-        # Artist Fix
-        artist_text = clean_text(artist.upper())
-        if len(artist_text) > 30: artist_text = artist_text[:28] + ".."
-        draw.text((x_pos, 300), artist_text, fill=(180, 180, 180, 255), font=artist_font)
+        # 6. DASHBOARD UI ELEMENTS (TOP & BOTTOM)
+        # Top bar (Hi User, Time, Connectivity)
+        draw.text((50, 30), "Hi, User", fill=(180, 180, 180, 200), font=small_f)
+        draw.text((1100, 30), "My iPhone  5G", fill=(180, 180, 180, 200), font=small_f)
+        
+        # Center "MUSIC" logo at top
+        draw.text((width//2 - 50, 30), "MUSICE", fill=(255, 255, 255, 180), font=small_f)
 
-        # "Available Now"
-        draw.text((x_pos, 420), "AVAILABLE NOW", fill=(255, 255, 255, 255), font=artist_font)
+        # 7. PLAYBACK CONTROLS (BOTTOM)
+        # Icons (Skip, Play, Shuffle) - Using Unicode Symbols
+        controls_y = 600
+        draw.text((200, controls_y), "⏮    ⏸    ⏭", fill=(255, 255, 255, 220), font=icon_f)
+        draw.text((700, controls_y), "≡    ⇄    📂    ❤", fill=(200, 200, 200, 180), font=icon_f)
 
-        # 5. UI BUTTONS
-        def draw_btn(x, y, txt):
-            draw.rounded_rectangle([x, y, x+170, y+45], radius=22, outline=(255,255,255,150), width=2)
-            draw.text((x+35, y+10), txt, fill="white", font=ui_font)
-
-        draw_btn(x_pos, 480, "SPOTIFY")
-        draw_btn(x_pos + 200, 480, "ITUNES")
-        draw_btn(x_pos, 545, "AMAZON")
-        draw_btn(x_pos + 200, 545, "YOUTUBE")
-
-        # Footer
-        footer = f"WWW.@{app.username.upper()}.COM"
-        draw.text((x_pos, 640), footer, fill=(120, 120, 120, 255), font=artist_font)
+        # Bottom Bar (Temperature & Power)
+        draw.text((150, 680), "<  21°  >", fill=(200, 200, 200, 200), font=small_f)
+        draw.text((1050, 680), "<  21°  >", fill=(200, 200, 200, 200), font=small_f)
+        
+        # Power Icon Button (Circle)
+        draw.ellipse([width//2-25, 670, width//2+25, 715], outline=(255,255,255,150), width=2)
+        draw.text((width//2-10, 678), "⏻", fill="white", font=small_f)
 
         # Cleanup & Save
-        if os.path.exists(temp_path): os.remove(temp_path)
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+            
         bg.convert("RGB").save(cache_path, "PNG", quality=100)
         return cache_path
 
     except Exception as e:
-        logging.error(f"Error: {e}")
+        logging.error(f"Futuristic UI Error: {e}")
         return YOUTUBE_IMG_URL
