@@ -2,19 +2,24 @@ import os
 import aiofiles
 import aiohttp
 import logging
+import re
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 from youtubesearchpython.__future__ import VideosSearch
 from config import YOUTUBE_IMG_URL
 from NEOMUSIC import app
 
-# Logging
 logging.basicConfig(level=logging.ERROR)
 
 CACHE_DIR = "cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
 
+# Title cleaning to avoid boxes
+def clean_title(text):
+    return re.sub(r'[^\x00-\x7f\u0900-\u097F\u00A0-\u00FF]+', '', text)
+
 async def get_thumb(videoid: str) -> str:
-    cache_path = os.path.join(CACHE_DIR, f"{videoid}_futuristic.png")
+    # Unique cache name
+    cache_path = os.path.join(CACHE_DIR, f"{videoid}_kiru_dashboard.png")
     if os.path.exists(cache_path):
         return cache_path
 
@@ -24,9 +29,9 @@ async def get_thumb(videoid: str) -> str:
         data = results_data["result"][0]
         title = data.get("title", "Unknown Track")
         thumbnail = data.get("thumbnails", [{}])[0].get("url", YOUTUBE_IMG_URL)
-        artist = data.get("channel", {}).get("name", "Various Artists")
+        artist = data.get("channel", {}).get("name", "Neo Music")
     except:
-        title, thumbnail, artist = "Music Track", YOUTUBE_IMG_URL, "Neo Music"
+        title, thumbnail, artist = "Music Track", YOUTUBE_IMG_URL, "Kiru Music"
 
     temp_path = os.path.join(CACHE_DIR, f"temp_{videoid}.jpg")
     async with aiohttp.ClientSession() as session:
@@ -40,83 +45,81 @@ async def get_thumb(videoid: str) -> str:
         width, height = 1280, 720
         yt_img = Image.open(temp_path).convert("RGBA")
         
-        # 2. DARK THEME BACKGROUND
-        # Background ko blur aur dark karke Tesla dashboard jaisa look dena
+        # 2. BLURRED DASHBOARD BACKGROUND
         bg = yt_img.resize((width, height))
-        bg = bg.filter(ImageFilter.GaussianBlur(80))
-        bg = ImageEnhance.Brightness(bg).enhance(0.2)
+        bg = bg.filter(ImageFilter.GaussianBlur(60))
+        bg = ImageEnhance.Brightness(bg).enhance(0.25)
         draw = ImageDraw.Draw(bg)
 
-        # 3. CIRCULAR MUSIC ART (LEFT SIDE)
+        # 3. CIRCULAR MUSIC ART (Anti-aliased)
         circle_size = 400
-        # Rounded mask for circle
-        mask = Image.new("L", (circle_size, circle_size), 0)
+        mask = Image.new("L", (circle_size * 2, circle_size * 2), 0)
         mask_draw = ImageDraw.Draw(mask)
-        mask_draw.ellipse((0, 0, circle_size, circle_size), fill=255)
+        mask_draw.ellipse((0, 0, circle_size * 2, circle_size * 2), fill=255)
+        mask = mask.resize((circle_size, circle_size), Image.Resampling.LANCZOS)
         
         main_img = ImageOps.fit(yt_img, (circle_size, circle_size), method=Image.Resampling.LANCZOS)
         
-        # Disc Glow Effect (Metallic Ring)
-        for i in range(25, 0, -2):
-            alpha = int(100 * (1 - i/25))
-            draw.ellipse([150-i, 160-i, 150+circle_size+i, 160+circle_size+i], outline=(255, 255, 255, alpha), width=2)
-        
+        # Outer Glowing Ring
+        draw.ellipse([145, 155, 145+circle_size+10, 155+circle_size+10], outline=(255, 255, 255, 40), width=10)
         bg.paste(main_img, (150, 160), mask)
 
         # 4. FONTS SETUP
-        font_path = "NEOMUSIC/assets/thumb/font.ttf" # Use a clean Sans font like Roboto/Montserrat
+        font_p = "NEOMUSIC/assets/thumb/font.ttf"
         try:
-            title_f = ImageFont.truetype(font_path, 65)
-            artist_f = ImageFont.truetype(font_path, 35)
-            small_f = ImageFont.truetype(font_path, 20)
-            icon_f = ImageFont.truetype(font_path, 45) # For symbols
+            title_f = ImageFont.truetype(font_p, 55)
+            artist_f = ImageFont.truetype(font_p, 30)
+            small_f = ImageFont.truetype(font_p, 22)
+            brand_f = ImageFont.truetype(font_p, 25) # Slightly bigger for Kiru
         except:
-            title_f = artist_f = small_f = icon_f = ImageFont.load_default()
+            title_f = artist_f = small_f = brand_f = ImageFont.load_default()
 
-        # 5. TEXT (RIGHT SIDE)
-        # Song Title
-        clean_title = title[:25] + ".." if len(title) > 25 else title
-        draw.text((650, 180), clean_title, fill=(255, 255, 255, 240), font=title_f)
+        # 5. TEXT (Right Side)
+        t_text = clean_title(title[:35] + ".." if len(title) > 35 else title)
+        draw.text((650, 200), t_text.upper(), fill=(255, 255, 255), font=title_f)
         
-        # Artist Name
-        draw.text((650, 260), artist.upper(), fill=(180, 180, 180, 200), font=artist_f)
+        a_text = clean_title(artist)
+        draw.text((650, 275), a_text.upper(), fill=(180, 180, 180), font=artist_f)
 
-        # Lyrics Placeholder (Dotted lines style like the image)
-        lyric_y = 380
-        lyrics = ["Tell me one good reason why I should try", "Continuing to fight it", "Running in circle round and round"]
-        for line in lyrics:
-            draw.text((650, lyric_y), line, fill=(150, 150, 150, 150), font=small_f)
-            lyric_y += 40
+        # Dashboard Text Info
+        draw.text((650, 400), "SYSTEM ONLINE", fill=(0, 200, 255), font=small_f)
+        draw.text((650, 435), "PLAYING HIGH QUALITY AUDIO", fill=(150, 150, 150), font=small_f)
+        draw.text((650, 470), f"CONTROLLED BY @{app.username.upper()}", fill=(150, 150, 150), font=small_f)
 
-        # 6. DASHBOARD UI ELEMENTS (TOP & BOTTOM)
-        # Top bar (Hi User, Time, Connectivity)
-        draw.text((50, 30), "Hi, User", fill=(180, 180, 180, 200), font=small_f)
-        draw.text((1100, 30), "My iPhone  5G", fill=(180, 180, 180, 200), font=small_f)
+        # 6. FIXING BOXES (MANUAL ICON DRAWING)
+        def draw_ui_icons(x, y):
+            # Previous Skip
+            draw.polygon([(x, y+15), (x+20, y), (x+20, y+30)], fill="white")
+            draw.rectangle([x-5, y, x-2, y+30], fill="white")
+            # Pause Button
+            draw.rectangle([x+50, y, x+60, y+30], fill="white")
+            draw.rectangle([x+70, y, x+80, y+30], fill="white")
+            # Next Skip
+            draw.polygon([(x+110, y), (x+110, y+30), (x+130, y+15)], fill="white")
+            draw.rectangle([x+132, y, x+135, y+30], fill="white")
+
+        draw_ui_icons(265, 620)
+
+        # 7. TOP & BOTTOM BRANDING (Hardcoded KIRU)
+        draw.text((50, 35), "Hi, User", fill=(150, 150, 150), font=small_f)
+        draw.text((width//2 - 40, 35), "KIRU PLAYER", fill="white", font=small_f)
         
-        # Center "MUSIC" logo at top
-        draw.text((width//2 - 50, 30), "MUSICE", fill=(255, 255, 255, 180), font=small_f)
-
-        # 7. PLAYBACK CONTROLS (BOTTOM)
-        # Icons (Skip, Play, Shuffle) - Using Unicode Symbols
-        controls_y = 600
-        draw.text((200, controls_y), "⏮    ⏸    ⏭", fill=(255, 255, 255, 220), font=icon_f)
-        draw.text((700, controls_y), "≡    ⇄    📂    ❤", fill=(200, 200, 200, 180), font=icon_f)
-
-        # Bottom Bar (Temperature & Power)
-        draw.text((150, 680), "<  21°  >", fill=(200, 200, 200, 200), font=small_f)
-        draw.text((1050, 680), "<  21°  >", fill=(200, 200, 200, 200), font=small_f)
+        # ---- KIRU HARDCODED HERE ----
+        draw.text((1120, 35), "KIRU", fill=(255, 255, 255, 200), font=brand_f)
         
-        # Power Icon Button (Circle)
-        draw.ellipse([width//2-25, 670, width//2+25, 715], outline=(255,255,255,150), width=2)
-        draw.text((width//2-10, 678), "⏻", fill="white", font=small_f)
+        # Bottom Details
+        draw.text((150, 685), "< 21° >", fill="white", font=small_f)
+        draw.text((1050, 685), "< 21° >", fill="white", font=small_f)
+        
+        # Center Power Button Draw
+        draw.ellipse([width//2-20, 675, width//2+20, 715], outline="white", width=2)
+        draw.rectangle([width//2-2, 680, width//2+2, 690], fill="white")
 
         # Cleanup & Save
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-            
+        if os.path.exists(temp_path): os.remove(temp_path)
         bg.convert("RGB").save(cache_path, "PNG", quality=100)
         return cache_path
 
     except Exception as e:
-        logging.error(f"Futuristic UI Error: {e}")
+        logging.error(f"Kiru Dashboard Error: {e}")
         return YOUTUBE_IMG_URL
