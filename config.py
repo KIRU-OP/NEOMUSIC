@@ -21,11 +21,6 @@ BOT_TOKEN = getenv("BOT_TOKEN")
 # MongoDB connection URI (for storing user & session data)
 MONGO_DB_URI = getenv("MONGO_DB_URI", None)
 
-# YouTube streaming proxy and key (used in API backend)
-YTPROXY_URL = getenv("YTPROXY_URL", "http://80.211.135.205:1470/youtube/")
-YT_API_KEY = getenv("YT_API_KEY", "AIzaSyCNDWhirI16BIMq66vMVsibtSiUQ6swguY")
-DOWNLOADS_DIR = getenv("DOWNLOADS_DIR", "downloads")
-
 BOT_DOCS =  getenv("BOT_DOCS", "https://radha-music.vercel.app")
 MINI_APP =  getenv("MINI_APP", "https://heroku-club.vercel.app")
 
@@ -46,13 +41,13 @@ HEROKU_APP_NAME = getenv("HEROKU_APP_NAME")
 HEROKU_API_KEY = getenv("HEROKU_API_KEY")
 
 # Git repo details (for updates & deployment)
-UPSTREAM_REPO = getenv("UPSTREAM_REPO", "https://github.com/VNI0X/ANONMUSIC")
+UPSTREAM_REPO = getenv("UPSTREAM_REPO", "https://github.com/KIRU-OP/NEOMUSIC")
 UPSTREAM_BRANCH = getenv("UPSTREAM_BRANCH", "Master")
 GIT_TOKEN = getenv("GIT_TOKEN")  # Only required for private repos
 
 # Support & community
-SUPPORT_CHANNEL = getenv("SUPPORT_CHANNEL", "https://t.me/heroku_club")
-SUPPORT_CHAT = getenv("SUPPORT_CHAT", "https://t.me/nobita_support")
+SUPPORT_CHANNEL = getenv("SUPPORT_CHANNEL", "https://t.me/about_deadly_venom")
+SUPPORT_CHAT = getenv("SUPPORT_CHAT", "https://t.me/+mivOpa__qBZjNGVl")
 
 # Assistant auto-leave =Voice Chat and Chat's setting
 AUTO_LEAVING_ASSISTANT = bool(getenv("AUTO_LEAVING_ASSISTANT", False))
@@ -102,18 +97,18 @@ START_IMG_URLS = [
     "https://files.catbox.moe/i84mwm.jpg",
 ]
 
-START_IMG_URL = getenv("START_IMG_URL", "https://files.catbox.moe/x3a3nc.jpg")
-PING_IMG_URL = getenv("PING_IMG_URL", "https://files.catbox.moe/x3a3nc.jpg")
-PLAYLIST_IMG_URL = getenv("PLAYLIST_IMG_URL", "https://files.catbox.moe/v7u8ji.jpg")
-STATS_IMG_URL = getenv("STATS_IMG_URL", "https://files.catbox.moe/7g7j9f.jpg")
-TELEGRAM_AUDIO_URL = getenv("TELEGRAM_AUDIO_URL", "https://files.catbox.moe/fahcob.jpg")
-TELEGRAM_VIDEO_URL = getenv("TELEGRAM_VIDEO_URL", "https://files.catbox.moe/gy14qk.jpg")
-STREAM_IMG_URL = getenv("STREAM_IMG_URL", "https://files.catbox.moe/h0m0wz.jpg")
-SOUNCLOUD_IMG_URL = getenv("SOUNCLOUD_IMG_URL", "https://files.catbox.moe/ieduw9.jpg")
-YOUTUBE_IMG_URL = getenv("YOUTUBE_IMG_URL", "https://files.catbox.moe/rnwmfw.jpg")
-SPOTIFY_ARTIST_IMG_URL = getenv("SPOTIFY_ARTIST_IMG_URL", "https://files.catbox.moe/66ye0m.jpg")
-SPOTIFY_ALBUM_IMG_URL = getenv("SPOTIFY_ALBUM_IMG_URL", "https://files.catbox.moe/66ye0m.jpg")
-SPOTIFY_PLAYLIST_IMG_URL = getenv("SPOTIFY_PLAYLIST_IMG_URL", "https://files.catbox.moe/66ye0m.jpg")
+START_IMG_URL = getenv("START_IMG_URL", "https://i.ibb.co/kVBgS8fm/x.jpg")
+PING_IMG_URL = getenv("PING_IMG_URL", "https://i.ibb.co/kVBgS8fm/x.jpg")
+PLAYLIST_IMG_URL = getenv("PLAYLIST_IMG_URL", "https://i.ibb.co/kVBgS8fm/x.jpg")
+STATS_IMG_URL = getenv("STATS_IMG_URL", "https://i.ibb.co/kVBgS8fm/x.jpg")
+TELEGRAM_AUDIO_URL = getenv("TELEGRAM_AUDIO_URL", "https://i.ibb.co/kVBgS8fm/x.jpg")
+TELEGRAM_VIDEO_URL = getenv("TELEGRAM_VIDEO_URL", "https://i.ibb.co/kVBgS8fm/x.jpg")
+STREAM_IMG_URL = getenv("STREAM_IMG_URL", "https://i.ibb.co/kVBgS8fm/x.jpg")
+SOUNCLOUD_IMG_URL = getenv("SOUNCLOUD_IMG_URL", "https://i.ibb.co/kVBgS8fm/x.jpg")
+YOUTUBE_IMG_URL = getenv("YOUTUBE_IMG_URL", "https://i.ibb.co/kVBgS8fm/x.jpg")
+SPOTIFY_ARTIST_IMG_URL = getenv("SPOTIFY_ARTIST_IMG_URL", "https://i.ibb.co/kVBgS8fm/x.jpg")
+SPOTIFY_ALBUM_IMG_URL = getenv("SPOTIFY_ALBUM_IMG_URL", "https://i.ibb.co/kVBgS8fm/x.jpg")
+SPOTIFY_PLAYLIST_IMG_URL = getenv("SPOTIFY_PLAYLIST_IMG_URL", "https://i.ibb.co/kVBgS8fm/x.jpg")
 
 # Convert time (hh:mm:ss) to seconds
 def time_to_seconds(time: str) -> int:
