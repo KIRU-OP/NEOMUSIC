@@ -17,7 +17,7 @@ error_exit() {
 
 # Check for already running bot
 if pgrep -f "python3 -m NEOMUSIC" > /dev/null; then
-    error_exit "AnonMusic is already running!"
+    error_exit "NEOMUSIC is already running!"
 fi
 
 # Clean up
