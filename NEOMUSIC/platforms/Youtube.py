@@ -15,7 +15,7 @@ from NEOMUSIC import LOGGER
 try:
     from config import API_ID, BOT_TOKEN, MONGO_DB_URI
 except ImportError:
-    LOGGER.error("Config file not found!")
+    LOGGER.error("Config file not found! Please check your configuration.")
 
 # --- SECURITY FILTER ---
 class SensitiveDataFilter(logging.Filter):
@@ -29,6 +29,7 @@ class SensitiveDataFilter(logging.Filter):
 
 logging.getLogger().addFilter(SensitiveDataFilter())
 
+# API URL (Ensure this is working)
 API_URL = "http://kiru-bot.up.railway.app"
 
 # --- UTILS ---
@@ -44,13 +45,14 @@ def get_clean_id(link: str) -> Optional[str]:
     return clean_id if 5 <= len(clean_id) <= 15 else None
 
 async def get_direct_stream_link(link: str, media_type: str) -> Optional[str]:
-    """Generates direct streamable URL via API"""
+    """Generates direct streamable URL via API with Timeout handling"""
     video_id = get_clean_id(link)
     if not video_id:
         return None
 
     try:
-        timeout = aiohttp.ClientTimeout(total=15) 
+        # Timeout badha kar 20 seconds kiya gaya hai
+        timeout = aiohttp.ClientTimeout(total=20) 
         async with aiohttp.ClientSession(headers={"User-Agent": "Mozilla/5.0"}, timeout=timeout) as session:
             async with session.get(f"{API_URL}/download", params={"url": video_id, "type": media_type}) as resp:
                 if resp.status == 200:
@@ -58,8 +60,8 @@ async def get_direct_stream_link(link: str, media_type: str) -> Optional[str]:
                     token = data.get("download_token")
                     if token:
                         return f"{API_URL}/stream/{video_id}?type={media_type}&token={token}"
-    except Exception:
-        pass # Fallback to yt-dlp will handle this
+    except Exception as e:
+        LOGGER.warning(f"External API Error: {e}")
     return None
 
 class YouTubeAPI:
@@ -102,7 +104,6 @@ class YouTubeAPI:
     async def details(self, link: str, videoid: Union[bool, str] = None):
         if videoid: link = self.base + link
         try:
-            # Check if it's a direct URL or a search query
             if not await self.exists(link):
                 res = await self.search(link, limit=1)
             else:
@@ -144,16 +145,21 @@ class YouTubeAPI:
         videoid: Union[bool, str] = None,
         **kwargs
     ) -> Tuple[Optional[str], bool]:
-        """Returns streamable URL. Fixes GroupcallInvalid by ensuring a valid link."""
+        """Main download function with fallback logic and Timeout safety"""
         if videoid: link = self.base + link
         m_type = "video" if video else "audio"
         
-        # 1. Pehle API se try karein (Fastest)
-        stream_link = await get_direct_stream_link(link, m_type)
-        if stream_link:
-            return stream_link, True
-        
-        # 2. Fallback: yt-dlp (Strongest) - Isse GroupcallInvalid solve ho jayega
+        # 1. API Method (Try with timeout)
+        try:
+            stream_link = await asyncio.wait_for(get_direct_stream_link(link, m_type), timeout=25)
+            if stream_link:
+                return stream_link, True
+        except asyncio.TimeoutError:
+            LOGGER.warning(f"API Timeout for {link}, switching to yt-dlp...")
+        except Exception as e:
+            LOGGER.error(f"API Method failed: {e}")
+
+        # 2. Fallback Method: yt-dlp (Strongest)
         try:
             ydl_opts = {
                 "format": "bestaudio/best" if not video else "bestvideo+bestaudio/best",
@@ -161,15 +167,21 @@ class YouTubeAPI:
                 "no_warnings": True,
                 "geo_bypass": True,
                 "nocheckcertificate": True,
+                "source_address": "0.0.0.0", # ipv4 preferred
             }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = await asyncio.to_thread(ydl.extract_info, link, download=False)
-                if 'url' in info:
-                    return info['url'], True
+            # Wrap yt-dlp in to_thread and add a timeout
+            info = await asyncio.to_thread(self._extract_info, link, ydl_opts)
+            if info and 'url' in info:
+                return info['url'], True
         except Exception as e:
-            LOGGER.error(f"Download Error: {e}")
+            LOGGER.error(f"yt-dlp Error: {e}")
             
         return None, False
+
+    def _extract_info(self, link, opts):
+        """Helper to run yt-dlp safely"""
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(link, download=False)
 
 # Initialize
 YouTube = YouTubeAPI()
