@@ -11,18 +11,7 @@ from youtubesearchpython.__future__ import VideosSearch
 from NEOMUSIC.utils.formatters import time_to_seconds
 from NEOMUSIC import LOGGER
 
-# --- SECURITY FILTER ---
-class SensitiveDataFilter(logging.Filter):
-    def filter(self, record):
-        msg = str(record.msg)
-        patterns = [r"\d{8,10}:[a-zA-Z0-9_-]{35,}", r"mongodb\+srv://\S+"]
-        for pattern in patterns:
-            msg = re.sub(pattern, "[PROTECTED]", msg)
-        record.msg = msg
-        return True
-
-logging.getLogger().addFilter(SensitiveDataFilter())
-
+# API URL
 API_URL = "https://kiru-bot.up.railway.app"
 
 def get_clean_id(link: str) -> Optional[str]:
@@ -51,14 +40,46 @@ class YouTubeAPI:
     async def exists(self, link: str):
         return bool(re.search(self.regex, link))
 
+    # --- YE METHOD MISSING THA (ISSUE FIX) ---
+    async def url(self, message: Message) -> Optional[str]:
+        """Extracts URL from message or replied message"""
+        messages = [message, message.reply_to_message]
+        for msg in messages:
+            if not msg: continue
+            text = msg.text or msg.caption
+            if not text: continue
+
+            if msg.entities:
+                for entity in msg.entities:
+                    if entity.type == MessageEntityType.URL:
+                        return text[entity.offset : entity.offset + entity.length]
+            
+            urls = re.findall(r'(https?://\S+)', text)
+            if urls: return urls[0]
+        return None
+
     async def details(self, link: str, videoid: Union[bool, str] = None):
         if videoid: 
             link = self.base + link
         
-        # Method 1: Try with youtubesearchpython
+        is_url = await self.exists(link)
+        if is_url:
+            try:
+                info = await asyncio.to_thread(self._extract_info, link, {"quiet": True, "noplaylist": True, "skip_download": True})
+                if info:
+                    return (
+                        info.get("title", "Unknown Title"),
+                        "00:00",
+                        int(info.get("duration", 0)),
+                        info.get("thumbnail", ""),
+                        info.get("id")
+                    )
+            except Exception as e:
+                LOGGER.warning(f"yt-dlp details failed: {e}")
+
         try:
-            results = VideosSearch(link, limit=1)
-            res_data = await results.next()
+            search = VideosSearch(link, limit=1)
+            res_data = await search.next()
             res = res_data.get("result", [])
             if res:
                 video = res[0]
@@ -70,22 +91,7 @@ class YouTubeAPI:
                     video["id"]
                 )
         except Exception as e:
-            LOGGER.warning(f"Search API failed, trying yt-dlp: {e}")
-
-        # Method 2: Fallback to yt-dlp (Stronger for direct URLs)
-        try:
-            info = await asyncio.to_thread(self._extract_info, link, {"quiet": True, "noplaylist": True})
-            if info:
-                return (
-                    info.get("title", "Unknown"),
-                    "00:00", # yt-dlp duration formatting is complex, keeping simple
-                    int(info.get("duration", 0)),
-                    info.get("thumbnail", ""),
-                    info.get("id")
-                )
-        except Exception as e:
-            LOGGER.error(f"yt-dlp details error: {e}")
-        
+            LOGGER.error(f"Search Error: {e}")
         return None
 
     async def track(self, query: str, videoid: Union[bool, str] = None):
@@ -109,7 +115,6 @@ class YouTubeAPI:
         if videoid: link = self.base + link
         m_type = "video" if video else "audio"
         
-        # 1. API Method
         try:
             timeout = aiohttp.ClientTimeout(total=15)
             async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -123,7 +128,6 @@ class YouTubeAPI:
         except:
             pass
 
-        # 2. Fallback: Direct yt-dlp
         try:
             info = await asyncio.to_thread(self._extract_info, link, self.ydl_opts)
             return info['url'], True
