@@ -16,7 +16,7 @@ try:
     from ytSearch import VideosSearch, Playlist
 except ImportError:
     try:
-        from youtubearchpython.__future__ import VideosSearch, Playlist
+        from youtubesearchpython.__future__ import VideosSearch, Playlist
     except ImportError:
         from youtubearchpython import VideosSearch, Playlist
 
