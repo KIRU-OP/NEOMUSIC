@@ -15,7 +15,7 @@ from pyrogram.types import Message
 try:
     from ytSearch import VideosSearch, Playlist
 except ImportError:
-    from youtubearchpython import VideosSearch, Playlist
+    from youtubesearchpython.__future__ import VideosSearch, Playlist
 
 class YouTubeAPI:
     def __init__(self):
