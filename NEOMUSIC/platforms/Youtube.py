@@ -1,5 +1,5 @@
 # Powered by: Kiru_Op
-# Fresh Anti-Ban & IP-Shifter Version
+# Pure Streaming Version - Anti-Ban - No Download
 
 import asyncio
 import os
@@ -11,12 +11,12 @@ import yt_dlp
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
 
-# Library handling (ModuleNotFoundError fix)
+# Library handling for YouTube Search
 try:
     from ytSearch import VideosSearch, Playlist
 except ImportError:
     try:
-        from youtubesearchpython.__future__ import VideosSearch, Playlist
+        from youtubearchpython.__future__ import VideosSearch, Playlist
     except ImportError:
         from youtubearchpython import VideosSearch, Playlist
 
@@ -26,28 +26,30 @@ class YouTubeAPI:
         self.regex = r"(?:youtube\.com|youtu\.be)"
         self.listbase = "https://youtube.com/playlist?list="
         
-        # Modern User-Agents rotation
+        # Identity rotation taaki YouTube ko pata na chale bot hai
         self.user_agents = [
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
             "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
         ]
 
     def get_random_ip(self):
-        """Random IP Generator for Shifting"""
+        """Har request ke liye random IP generate karta hai (Header Spoofing)"""
         return ".".join(map(str, (random.randint(1, 254) for _ in range(4))))
 
     def get_ytdl_opts(self):
-        """Dynamic options with IP Spoofing"""
+        """Streaming optimized settings without Cookies"""
         return {
             "quiet": True,
             "no_warnings": True,
             "geo_bypass": True,
             "nocheckcertificate": True,
-            "source_address": "0.0.0.0", # Force IPv4
+            "source_address": "0.0.0.0", # IPv4 use karega (VPS ban se bachne ke liye)
             "headers": {
                 "X-Forwarded-For": self.get_random_ip(),
+                "Accept-Language": "en-US,en;q=0.9",
                 "User-Agent": random.choice(self.user_agents),
             },
             "extractor_args": {
@@ -87,7 +89,6 @@ class YouTubeAPI:
         
         try:
             search = VideosSearch(link, limit=1)
-            # Check if using async library or sync
             import inspect
             if inspect.iscoroutinefunction(search.next):
                 result = (await search.next())["result"]
@@ -99,22 +100,21 @@ class YouTubeAPI:
             
             res = result[0]
             title = res.get("title", "Unknown")
-            duration_min = res.get("duration", "00:00")
-            thumbnail = res["thumbnails"][0]["url"].split("?")[0]
+            duration = res.get("duration", "00:00")
+            thumb = res["thumbnails"][0]["url"].split("?")[0]
             vidid = res.get("id", "None")
             
             # Duration to Seconds
             seconds = 0
-            if duration_min:
+            if duration:
                 try:
-                    parts = duration_min.split(':')
+                    parts = duration.split(':')
                     for i, part in enumerate(reversed(parts)):
                         seconds += int(part) * (60 ** i)
                 except: seconds = 0
             
-            return title, duration_min, seconds, thumbnail, vidid
+            return title, duration, seconds, thumb, vidid
         except Exception:
-            # Taaki play.py crash na ho, hum default values bhej rahe hain
             return "Unknown", "00:00", 0, "https://telegra.ph/file/default.jpg", "None"
 
     async def title(self, link: str, videoid: Union[bool, str] = None):
@@ -130,6 +130,7 @@ class YouTubeAPI:
         return res[3]
 
     async def video(self, link: str, videoid: Union[bool, str] = None):
+        """Direct Video Stream Link"""
         if videoid:
             link = self.base + link
         opts = self.get_ytdl_opts()
@@ -176,28 +177,32 @@ class YouTubeAPI:
         format_id: Union[bool, str] = None,
         title: Union[bool, str] = "track",
     ) -> str:
+        """
+        No Download Process. 
+        Only returns direct streaming URL to save disk space.
+        """
         if videoid:
             link = self.base + link
         
         loop = asyncio.get_running_loop()
 
-        def _dl():
+        def _get_stream():
             opts = self.get_ytdl_opts()
-            if songvideo:
-                opts.update({"format": f"{format_id}+140/bestvideo+bestaudio", "outtmpl": f"downloads/{title}.mp4", "merge_output_format": "mp4"})
-            elif songaudio:
-                opts.update({"format": format_id if format_id else "bestaudio", "outtmpl": f"downloads/{title}.%(ext)s", "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}]})
-            elif video:
-                opts.update({"format": "best[height<=720]", "outtmpl": "downloads/%(id)s.%(ext)s"})
+            # Direct streaming format select
+            if video or songvideo:
+                opts["format"] = "best[height<=720]"
             else:
-                opts.update({"format": "bestaudio/best", "outtmpl": "downloads/%(id)s.%(ext)s"})
+                opts["format"] = "bestaudio/best"
 
             with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(link, download=True)
-                filename = ydl.prepare_filename(info)
-                if songaudio:
-                    filename = os.path.splitext(filename)[0] + ".mp3"
-                return filename
+                info = ydl.extract_info(link, download=False)
+                return info['url']
 
-        downloaded_file = await loop.run_in_executor(None, _dl)
-        return downloaded_file, True
+        try:
+            # Direct link extracted from YouTube
+            stream_url = await loop.run_in_executor(None, _get_stream)
+            # return (url, direct) 
+            # direct=None batata hai ki ye ek live stream link hai
+            return stream_url, None
+        except Exception as e:
+            return str(e), False
