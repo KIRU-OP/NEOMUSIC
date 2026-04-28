@@ -1,5 +1,5 @@
 # Powered by: Kiru_Op
-# Anti-Ban & IP-Shifter Version (No Cookies Required)
+# Anti-Ban & IP-Shifter Version
 
 import asyncio
 import os
@@ -10,8 +10,12 @@ from typing import Union
 import yt_dlp
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
-from youtubearchpython.__future__ import VideosSearch, Playlist
 
+# Purane library name ke hisaab se imports
+try:
+    from ytSearch import VideosSearch, Playlist
+except ImportError:
+    from youtubearchpython import VideosSearch, Playlist
 
 class YouTubeAPI:
     def __init__(self):
@@ -19,31 +23,28 @@ class YouTubeAPI:
         self.regex = r"(?:youtube\.com|youtu\.be)"
         self.listbase = "https://youtube.com/playlist?list="
         
-        # Modern User-Agents rotation ke liye
+        # Modern User-Agents rotation
         self.user_agents = [
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
             "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
         ]
 
     def get_random_ip(self):
-        """Har request ke liye random IP generate karta hai (Header Spoofing)"""
+        """IP Shifting logic"""
         return ".".join(map(str, (random.randint(1, 254) for _ in range(4))))
 
     def get_ytdl_opts(self):
-        """Dynamic options jo har baar IP aur User-Agent badalte hain"""
-        random_ip = self.get_random_ip()
+        """Dynamic headers for each request"""
         return {
             "quiet": True,
             "no_warnings": True,
             "geo_bypass": True,
             "nocheckcertificate": True,
-            "source_address": "0.0.0.0",  # IPv4 ko force karta hai (Ban hone se bachata hai)
+            "source_address": "0.0.0.0", # Force IPv4 to avoid ban
             "headers": {
-                "X-Forwarded-For": random_ip,
-                "Accept-Language": "en-US,en;q=0.9",
+                "X-Forwarded-For": self.get_random_ip(),
                 "User-Agent": random.choice(self.user_agents),
             },
             "extractor_args": {
@@ -81,8 +82,9 @@ class YouTubeAPI:
         if "&" in link:
             link = link.split("&")[0]
         
+        # Isko async handle karne ke liye (Aapki library ke according)
         search = VideosSearch(link, limit=1)
-        result = (await search.next())["result"]
+        result = search.result()["result"]
         if not result:
             return None
         
@@ -92,7 +94,6 @@ class YouTubeAPI:
         thumbnail = res["thumbnails"][0]["url"].split("?")[0]
         vidid = res["id"]
         
-        # Duration to Seconds conversion
         seconds = 0
         if duration_min:
             try:
@@ -138,10 +139,7 @@ class YouTubeAPI:
         if videoid:
             link = self.listbase + link
         playlist = Playlist(link)
-        while playlist.hasMoreVideos:
-            await playlist.getNextVideos()
-            if len(playlist.videos) >= limit:
-                break
+        # Playlist fetch logic as per ytSearch
         return [v['id'] for v in playlist.videos[:limit]]
 
     async def track(self, link: str, videoid: Union[bool, str] = None):
