@@ -10,7 +10,7 @@ from typing import Union
 import yt_dlp
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
-from ytSearch import VideosSearch, Playlist
+from youtubearchpython.__future__ import VideosSearch, Playlist
 
 
 class YouTubeAPI:
