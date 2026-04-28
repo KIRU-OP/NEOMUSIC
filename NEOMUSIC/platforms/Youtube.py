@@ -1,5 +1,5 @@
 # Powered by: Kiru_Op
-# Anti-Ban & IP-Shifter Version
+# Fresh Anti-Ban & IP-Shifter Version
 
 import asyncio
 import os
@@ -11,11 +11,14 @@ import yt_dlp
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
 
-# Purane library name ke hisaab se imports
+# Library handling (ModuleNotFoundError fix)
 try:
     from ytSearch import VideosSearch, Playlist
 except ImportError:
-    from youtubesearchpython.__future__ import VideosSearch, Playlist
+    try:
+        from youtubesearchpython.__future__ import VideosSearch, Playlist
+    except ImportError:
+        from youtubearchpython import VideosSearch, Playlist
 
 class YouTubeAPI:
     def __init__(self):
@@ -32,24 +35,24 @@ class YouTubeAPI:
         ]
 
     def get_random_ip(self):
-        """IP Shifting logic"""
+        """Random IP Generator for Shifting"""
         return ".".join(map(str, (random.randint(1, 254) for _ in range(4))))
 
     def get_ytdl_opts(self):
-        """Dynamic headers for each request"""
+        """Dynamic options with IP Spoofing"""
         return {
             "quiet": True,
             "no_warnings": True,
             "geo_bypass": True,
             "nocheckcertificate": True,
-            "source_address": "0.0.0.0", # Force IPv4 to avoid ban
+            "source_address": "0.0.0.0", # Force IPv4
             "headers": {
                 "X-Forwarded-For": self.get_random_ip(),
                 "User-Agent": random.choice(self.user_agents),
             },
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["android", "web", "ios"],
+                    "player_client": ["android", "ios", "web"],
                     "skip": ["dash", "hls"]
                 }
             }
@@ -82,40 +85,49 @@ class YouTubeAPI:
         if "&" in link:
             link = link.split("&")[0]
         
-        # Isko async handle karne ke liye (Aapki library ke according)
-        search = VideosSearch(link, limit=1)
-        result = search.result()["result"]
-        if not result:
-            return None
-        
-        res = result[0]
-        title = res["title"]
-        duration_min = res["duration"]
-        thumbnail = res["thumbnails"][0]["url"].split("?")[0]
-        vidid = res["id"]
-        
-        seconds = 0
-        if duration_min:
-            try:
-                parts = duration_min.split(':')
-                for i, part in enumerate(reversed(parts)):
-                    seconds += int(part) * (60 ** i)
-            except:
-                seconds = 0
-        
-        return title, duration_min, seconds, thumbnail, vidid
+        try:
+            search = VideosSearch(link, limit=1)
+            # Check if using async library or sync
+            import inspect
+            if inspect.iscoroutinefunction(search.next):
+                result = (await search.next())["result"]
+            else:
+                result = search.result()["result"]
+                
+            if not result:
+                return "Unknown", "00:00", 0, "https://telegra.ph/file/default.jpg", "None"
+            
+            res = result[0]
+            title = res.get("title", "Unknown")
+            duration_min = res.get("duration", "00:00")
+            thumbnail = res["thumbnails"][0]["url"].split("?")[0]
+            vidid = res.get("id", "None")
+            
+            # Duration to Seconds
+            seconds = 0
+            if duration_min:
+                try:
+                    parts = duration_min.split(':')
+                    for i, part in enumerate(reversed(parts)):
+                        seconds += int(part) * (60 ** i)
+                except: seconds = 0
+            
+            return title, duration_min, seconds, thumbnail, vidid
+        except Exception:
+            # Taaki play.py crash na ho, hum default values bhej rahe hain
+            return "Unknown", "00:00", 0, "https://telegra.ph/file/default.jpg", "None"
 
     async def title(self, link: str, videoid: Union[bool, str] = None):
         res = await self.details(link, videoid)
-        return res[0] if res else None
+        return res[0]
 
     async def duration(self, link: str, videoid: Union[bool, str] = None):
         res = await self.details(link, videoid)
-        return res[1] if res else None
+        return res[1]
 
     async def thumbnail(self, link: str, videoid: Union[bool, str] = None):
         res = await self.details(link, videoid)
-        return res[3] if res else None
+        return res[3]
 
     async def video(self, link: str, videoid: Union[bool, str] = None):
         if videoid:
@@ -123,13 +135,11 @@ class YouTubeAPI:
         opts = self.get_ytdl_opts()
         opts["format"] = "best[height<=720]"
         
-        loop = asyncio.get_running_loop()
-        def extract():
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(link, download=False)
-                return info['url']
-        
         try:
+            loop = asyncio.get_running_loop()
+            def extract():
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    return ydl.extract_info(link, download=False)['url']
             url = await loop.run_in_executor(None, extract)
             return 1, url
         except Exception as e:
@@ -138,14 +148,14 @@ class YouTubeAPI:
     async def playlist(self, link, limit, user_id, videoid: Union[bool, str] = None):
         if videoid:
             link = self.listbase + link
-        playlist = Playlist(link)
-        # Playlist fetch logic as per ytSearch
-        return [v['id'] for v in playlist.videos[:limit]]
+        try:
+            playlist = Playlist(link)
+            return [v['id'] for v in playlist.videos[:limit]]
+        except:
+            return []
 
     async def track(self, link: str, videoid: Union[bool, str] = None):
         det = await self.details(link, videoid)
-        if not det: return None, None
-        
         track_details = {
             "title": det[0],
             "link": self.base + det[4],
@@ -154,30 +164,6 @@ class YouTubeAPI:
             "thumb": det[3],
         }
         return track_details, det[4]
-
-    async def formats(self, link: str, videoid: Union[bool, str] = None):
-        if videoid:
-            link = self.base + link
-        opts = self.get_ytdl_opts()
-        
-        loop = asyncio.get_running_loop()
-        def get_fmt():
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                return ydl.extract_info(link, download=False)
-
-        info = await loop.run_in_executor(None, get_fmt)
-        formats_available = []
-        for f in info.get("formats", []):
-            if f.get("filesize") and f.get("format_id"):
-                formats_available.append({
-                    "format": f.get("format"),
-                    "filesize": f["filesize"],
-                    "format_id": f["format_id"],
-                    "ext": f["ext"],
-                    "format_note": f.get("format_note", "N/A"),
-                    "yturl": link,
-                })
-        return formats_available, link
 
     async def download(
         self,
@@ -197,33 +183,14 @@ class YouTubeAPI:
 
         def _dl():
             opts = self.get_ytdl_opts()
-            
             if songvideo:
-                opts.update({
-                    "format": f"{format_id}+140/bestvideo+bestaudio",
-                    "outtmpl": f"downloads/{title}.mp4",
-                    "merge_output_format": "mp4",
-                })
+                opts.update({"format": f"{format_id}+140/bestvideo+bestaudio", "outtmpl": f"downloads/{title}.mp4", "merge_output_format": "mp4"})
             elif songaudio:
-                opts.update({
-                    "format": format_id if format_id else "bestaudio",
-                    "outtmpl": f"downloads/{title}.%(ext)s",
-                    "postprocessors": [{
-                        "key": "FFmpegExtractAudio",
-                        "preferredcodec": "mp3",
-                        "preferredquality": "192",
-                    }],
-                })
+                opts.update({"format": format_id if format_id else "bestaudio", "outtmpl": f"downloads/{title}.%(ext)s", "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}]})
             elif video:
-                opts.update({
-                    "format": "best[height<=720]",
-                    "outtmpl": "downloads/%(id)s.%(ext)s",
-                })
+                opts.update({"format": "best[height<=720]", "outtmpl": "downloads/%(id)s.%(ext)s"})
             else:
-                opts.update({
-                    "format": "bestaudio/best",
-                    "outtmpl": "downloads/%(id)s.%(ext)s",
-                })
+                opts.update({"format": "bestaudio/best", "outtmpl": "downloads/%(id)s.%(ext)s"})
 
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(link, download=True)
