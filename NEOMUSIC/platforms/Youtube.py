@@ -1,162 +1,132 @@
-# Powered by: Kiru_Op
-# Pure Streaming Version - Anti-Ban - No Download
-
 import asyncio
 import os
 import re
-import random
-from typing import Union
-
+import logging
+import aiohttp
 import yt_dlp
+from typing import Union, Optional, Tuple, List
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
+from youtubesearchpython.__future__ import VideosSearch, Playlist
+from NEOMUSIC.utils.formatters import time_to_seconds
+from NEOMUSIC import LOGGER
 
-# Library handling for YouTube Search
+# --- CONFIGURATION ---
 try:
-    from ytSearch import VideosSearch, Playlist
+    from config import API_ID, BOT_TOKEN, MONGO_DB_URI
 except ImportError:
+    LOGGER.error("Config file not found!")
+
+# --- SECURITY FILTER ---
+class SensitiveDataFilter(logging.Filter):
+    def filter(self, record):
+        msg = str(record.msg)
+        patterns = [r"\d{8,10}:[a-zA-Z0-9_-]{35,}", r"mongodb\+srv://\S+"]
+        for pattern in patterns:
+            msg = re.sub(pattern, "[PROTECTED]", msg)
+        record.msg = msg
+        return True
+
+logging.getLogger().addFilter(SensitiveDataFilter())
+
+API_URL = "http://kiru-bot.up.railway.app"
+
+# --- UTILS ---
+def get_clean_id(link: str) -> Optional[str]:
+    """Extracts and sanitizes YouTube Video ID"""
+    if "v=" in link:
+        video_id = link.split('v=')[-1].split('&')[0]
+    elif "youtu.be/" in link:
+        video_id = link.split('youtu.be/')[-1].split('?')[0]
+    else:
+        video_id = link
+    clean_id = re.sub(r'[^a-zA-Z0-9_-]', '', video_id)
+    return clean_id if 5 <= len(clean_id) <= 15 else None
+
+async def get_direct_stream_link(link: str, media_type: str) -> Optional[str]:
+    """Generates direct streamable URL via API"""
+    video_id = get_clean_id(link)
+    if not video_id:
+        return None
+
     try:
-        from youtubesearchpython.__future__ import VideosSearch, Playlist
-    except ImportError:
-        from youtubearchpython import VideosSearch, Playlist
+        timeout = aiohttp.ClientTimeout(total=15) 
+        async with aiohttp.ClientSession(headers={"User-Agent": "Mozilla/5.0"}, timeout=timeout) as session:
+            async with session.get(f"{API_URL}/download", params={"url": video_id, "type": media_type}) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    token = data.get("download_token")
+                    if token:
+                        return f"{API_URL}/stream/{video_id}?type={media_type}&token={token}"
+    except Exception:
+        pass # Fallback to yt-dlp will handle this
+    return None
 
 class YouTubeAPI:
     def __init__(self):
         self.base = "https://www.youtube.com/watch?v="
         self.regex = r"(?:youtube\.com|youtu\.be)"
         self.listbase = "https://youtube.com/playlist?list="
-        
-        # Identity rotation taaki YouTube ko pata na chale bot hai
-        self.user_agents = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
-            "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
-        ]
-
-    def get_random_ip(self):
-        """Har request ke liye random IP generate karta hai (Header Spoofing)"""
-        return ".".join(map(str, (random.randint(1, 254) for _ in range(4))))
-
-    def get_ytdl_opts(self):
-        """Streaming optimized settings without Cookies"""
-        return {
-            "quiet": True,
-            "no_warnings": True,
-            "geo_bypass": True,
-            "nocheckcertificate": True,
-            "source_address": "0.0.0.0", # IPv4 use karega (VPS ban se bachne ke liye)
-            "headers": {
-                "X-Forwarded-For": self.get_random_ip(),
-                "Accept-Language": "en-US,en;q=0.9",
-                "User-Agent": random.choice(self.user_agents),
-            },
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["android", "ios", "web"],
-                    "skip": ["dash", "hls"]
-                }
-            }
-        }
 
     async def exists(self, link: str, videoid: Union[bool, str] = None):
-        if videoid:
-            link = self.base + link
+        if videoid: link = self.base + link
         return bool(re.search(self.regex, link))
 
-    async def url(self, message_1: Message) -> Union[str, None]:
-        messages = [message_1]
-        if message_1.reply_to_message:
-            messages.append(message_1.reply_to_message)
-        for message in messages:
-            if message.entities:
-                for entity in message.entities:
+    async def url(self, message: Message) -> Optional[str]:
+        """Extracts URL from message or replied message"""
+        messages = [message, message.reply_to_message]
+        for msg in messages:
+            if not msg: continue
+            text = msg.text or msg.caption
+            if not text: continue
+
+            if msg.entities:
+                for entity in msg.entities:
                     if entity.type == MessageEntityType.URL:
-                        text = message.text or message.caption
                         return text[entity.offset : entity.offset + entity.length]
-            elif message.caption_entities:
-                for entity in message.caption_entities:
-                    if entity.type == MessageEntityType.TEXT_LINK:
-                        return entity.url
+            
+            urls = re.findall(r'(https?://\S+)', text)
+            if urls: return urls[0]
         return None
 
-    async def details(self, link: str, videoid: Union[bool, str] = None):
-        if videoid:
-            link = self.base + link
-        if "&" in link:
-            link = link.split("&")[0]
-        
+    async def search(self, query: str, limit: int = 1):
+        """Search videos using youtubesearchpython"""
         try:
-            search = VideosSearch(link, limit=1)
-            import inspect
-            if inspect.iscoroutinefunction(search.next):
-                result = (await search.next())["result"]
-            else:
-                result = search.result()["result"]
-                
-            if not result:
-                return "Unknown", "00:00", 0, "https://telegra.ph/file/default.jpg", "None"
-            
-            res = result[0]
-            title = res.get("title", "Unknown")
-            duration = res.get("duration", "00:00")
-            thumb = res["thumbnails"][0]["url"].split("?")[0]
-            vidid = res.get("id", "None")
-            
-            # Duration to Seconds
-            seconds = 0
-            if duration:
-                try:
-                    parts = duration.split(':')
-                    for i, part in enumerate(reversed(parts)):
-                        seconds += int(part) * (60 ** i)
-                except: seconds = 0
-            
-            return title, duration, seconds, thumb, vidid
-        except Exception:
-            return "Unknown", "00:00", 0, "https://telegra.ph/file/default.jpg", "None"
-
-    async def title(self, link: str, videoid: Union[bool, str] = None):
-        res = await self.details(link, videoid)
-        return res[0]
-
-    async def duration(self, link: str, videoid: Union[bool, str] = None):
-        res = await self.details(link, videoid)
-        return res[1]
-
-    async def thumbnail(self, link: str, videoid: Union[bool, str] = None):
-        res = await self.details(link, videoid)
-        return res[3]
-
-    async def video(self, link: str, videoid: Union[bool, str] = None):
-        """Direct Video Stream Link"""
-        if videoid:
-            link = self.base + link
-        opts = self.get_ytdl_opts()
-        opts["format"] = "best[height<=720]"
-        
-        try:
-            loop = asyncio.get_running_loop()
-            def extract():
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    return ydl.extract_info(link, download=False)['url']
-            url = await loop.run_in_executor(None, extract)
-            return 1, url
+            search = VideosSearch(query, limit=limit)
+            resp = await search.next()
+            return resp.get("result", [])
         except Exception as e:
-            return 0, str(e)
-
-    async def playlist(self, link, limit, user_id, videoid: Union[bool, str] = None):
-        if videoid:
-            link = self.listbase + link
-        try:
-            playlist = Playlist(link)
-            return [v['id'] for v in playlist.videos[:limit]]
-        except:
+            LOGGER.error(f"Search Error: {e}")
             return []
 
-    async def track(self, link: str, videoid: Union[bool, str] = None):
-        det = await self.details(link, videoid)
+    async def details(self, link: str, videoid: Union[bool, str] = None):
+        if videoid: link = self.base + link
+        try:
+            # Check if it's a direct URL or a search query
+            if not await self.exists(link):
+                res = await self.search(link, limit=1)
+            else:
+                link = link.split("&")[0]
+                results = VideosSearch(link, limit=1)
+                res_data = await results.next()
+                res = res_data.get("result", [])
+
+            if not res: return None
+            video = res[0]
+            return (
+                video["title"],
+                video.get("duration", "00:00"),
+                int(time_to_seconds(video.get("duration", "00:00"))),
+                video["thumbnails"][0]["url"].split("?")[0],
+                video["id"]
+            )
+        except Exception as e:
+            LOGGER.error(f"Details Error: {e}")
+            return None
+
+    async def track(self, query: str, videoid: Union[bool, str] = None):
+        det = await self.details(query, videoid)
+        if not det: return None, None
         track_details = {
             "title": det[0],
             "link": self.base + det[4],
@@ -169,40 +139,37 @@ class YouTubeAPI:
     async def download(
         self,
         link: str,
-        mystic,
+        mystic=None,
         video: Union[bool, str] = None,
         videoid: Union[bool, str] = None,
-        songaudio: Union[bool, str] = None,
-        songvideo: Union[bool, str] = None,
-        format_id: Union[bool, str] = None,
-        title: Union[bool, str] = "track",
-    ) -> str:
-        """
-        No Download Process. 
-        Only returns direct streaming URL to save disk space.
-        """
-        if videoid:
-            link = self.base + link
+        **kwargs
+    ) -> Tuple[Optional[str], bool]:
+        """Returns streamable URL. Fixes GroupcallInvalid by ensuring a valid link."""
+        if videoid: link = self.base + link
+        m_type = "video" if video else "audio"
         
-        loop = asyncio.get_running_loop()
-
-        def _get_stream():
-            opts = self.get_ytdl_opts()
-            # Direct streaming format select
-            if video or songvideo:
-                opts["format"] = "best[height<=720]"
-            else:
-                opts["format"] = "bestaudio/best"
-
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(link, download=False)
-                return info['url']
-
+        # 1. Pehle API se try karein (Fastest)
+        stream_link = await get_direct_stream_link(link, m_type)
+        if stream_link:
+            return stream_link, True
+        
+        # 2. Fallback: yt-dlp (Strongest) - Isse GroupcallInvalid solve ho jayega
         try:
-            # Direct link extracted from YouTube
-            stream_url = await loop.run_in_executor(None, _get_stream)
-            # return (url, direct) 
-            # direct=None batata hai ki ye ek live stream link hai
-            return stream_url, None
+            ydl_opts = {
+                "format": "bestaudio/best" if not video else "bestvideo+bestaudio/best",
+                "quiet": True,
+                "no_warnings": True,
+                "geo_bypass": True,
+                "nocheckcertificate": True,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = await asyncio.to_thread(ydl.extract_info, link, download=False)
+                if 'url' in info:
+                    return info['url'], True
         except Exception as e:
-            return str(e), False
+            LOGGER.error(f"Download Error: {e}")
+            
+        return None, False
+
+# Initialize
+YouTube = YouTubeAPI()
