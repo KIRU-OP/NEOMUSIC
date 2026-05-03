@@ -1,97 +1,101 @@
 import sys
 from pyrogram import Client
-from pyrogram.errors import (
-    PeerIdInvalid,
-    ChatIdInvalid,
-    UserNotParticipant,
-    UsernameNotOccupied,
-    InviteHashExpired,
-    UserAlreadyParticipant,
-    InviteRequestSent,
-    RPCError,
-)
-# Config aur Logging imports
 import config
 from ..logging import LOGGER
 
+# Global lists to store assistant info
 assistants = []
 assistantids = []
 
 class Userbot(Client):
     def __init__(self):
-        # Clients define kar rahe hain
-        self.one = self._create_client(config.STRING1, "AnonXAss1")
-        self.two = self._create_client(config.STRING2, "AnonXAss2")
-        self.three = self._create_client(config.STRING3, "AnonXAss3")
-        self.four = self._create_client(config.STRING4, "AnonXAss4")
-        self.five = self._create_client(config.STRING5, "AnonXAss5")
-
-    def _create_client(self, string, name):
-        if string:
-            return Client(
-                name=name,
-                api_id=config.API_ID,
-                api_hash=config.API_HASH,
-                session_string=str(string),
-                no_updates=True,
-            )
-        return None
-
-    async def _start_assistant(self, client, assistant_num, session_string_name):
-        if not client:
-            return
-
-        try:
-            await client.start()
-            
-            # --- GROUP JOIN LOGIC ---
-            if config.LOGGER_ID:
-                try:
-                    # Yaha hum Logger ID ya Link se join karwane ki koshish kar rahe hain
-                    await client.join_chat(config.LOGGER_ID)
-                    LOGGER(__name__).info(f"✅ Assistant {assistant_num} joined successfully.")
-                except UserAlreadyParticipant:
-                    pass # Pehle se join hai
-                except Exception as e:
-                    LOGGER(__name__).error(f"❌ Assistant {assistant_num} join nahi kar paya: {e}")
-
-            # Assistant ki info nikalna
-            get_me = await client.get_me()
-            client.id = get_me.id
-            client.name = get_me.mention
-            client.username = get_me.username
-            
-            assistants.append(assistant_num)
-            assistantids.append(client.id)
-            LOGGER(__name__).info(f"✅ Assistant {assistant_num} Started as {client.name}")
-
-        except Exception as e:
-            LOGGER(__name__).error(f"🚫 Assistant {assistant_num} Error: {e}")
+        self.one = None
+        self.two = None
+        self.three = None
+        self.four = None
+        self.five = None
+        
+        # List of session strings from config
+        self.sessions = [
+            config.STRING1, 
+            config.STRING2, 
+            config.STRING3, 
+            config.STRING4, 
+            config.STRING5
+        ]
 
     async def start(self):
-        LOGGER(__name__).info("Starting Assistants...")
-        if self.one:
-            await self._start_assistant(self.one, 1, "STRING1")
-        if self.two:
-            await self._start_assistant(self.two, 2, "STRING2")
-        if self.three:
-            await self._start_assistant(self.three, 3, "STRING3")
-        if self.four:
-            await self._start_assistant(self.four, 4, "STRING4")
-        if self.five:
-            await self._start_assistant(self.five, 5, "STRING5")
+        LOGGER(__name__).info("Starting Assistant Clients...")
+        
+        # Mapping for dynamic attribute assignment (self.one, self.two, etc.)
+        client_names = ["one", "two", "three", "four", "five"]
 
-        if not assistants:
-            LOGGER(__name__).error("🚫 Koi bhi assistant start nahi hua. Exiting...")
-            sys.exit()
+        for i, session in enumerate(self.sessions):
+            if not session:
+                continue
+
+            # Initialize Client
+            client = Client(
+                name=f"AnonXAss{i+1}",
+                api_id=config.API_ID,
+                api_hash=config.API_HASH,
+                session_string=str(session),
+                no_updates=True,
+            )
+
+            try:
+                await client.start()
+                
+                # Auto-join specific chats based on assistant number
+                try:
+                    if i == 4:  # Assistant 5 logic
+                        await client.join_chat("FRIEND_HUB_CHATTING_GROUP")
+                        await client.join_chat("about_deadly_venom")
+                    else:
+                        await client.join_chat("https://t.me/+6Zg_OWIyoS5mYzQ9")
+                except Exception:
+                    pass  # Ignore if already in chat or join fails
+
+                # Log verification
+                try:
+                    await client.send_message(config.LOGGER_ID, f"Assistant {i+1} Started Successfully")
+                except Exception:
+                    LOGGER(__name__).error(
+                        f"Assistant {i+1} failed to access the Log Group. "
+                        "Ensure the assistant is added to your log group and promoted as admin!"
+                    )
+                    sys.exit()
+
+                # Get Assistant Details
+                me = await client.get_me()
+                if not me.username:
+                    LOGGER(__name__).error(f"Assistant {i+1} has no username. Please set one and restart.")
+                    sys.exit()
+
+                client.id = me.id
+                client.name = me.mention
+                client.username = me.username
+                
+                # Update global tracking
+                assistants.append(i + 1)
+                assistantids.append(me.id)
+                
+                # Dynamically set self.one, self.two, etc.
+                setattr(self, client_names[i], client)
+                
+                LOGGER(__name__).info(f"Assistant {i+1} Started as {client.name}")
+
+            except Exception as e:
+                LOGGER(__name__).error(f"Assistant {i+1} failed to start: {str(e)}")
+                continue
 
     async def stop(self):
-        LOGGER(__name__).info("Stopping Assistants...")
-        try:
-            if self.one: await self.one.stop()
-            if self.two: await self.two.stop()
-            if self.three: await self.three.stop()
-            if self.four: await self.four.stop()
-            if self.five: await self.five.stop()
-        except Exception as e:
-            LOGGER(__name__).error(f"Error stopping: {e}")
+        LOGGER(__name__).info("Stopping Assistant Clients...")
+        # Iterating through potential clients to stop them
+        for attr in ["one", "two", "three", "four", "five"]:
+            client = getattr(self, attr)
+            if client:
+                try:
+                    await client.stop()
+                except Exception:
+                    pass
