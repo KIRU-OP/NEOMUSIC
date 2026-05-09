@@ -12,7 +12,10 @@ from NEOMUSIC.utils.formatters import time_to_seconds
 from NEOMUSIC import LOGGER
 
 # --- CONFIGURATION ---
-from config import API_ID, BOT_TOKEN, MONGO_DB_URI, YOUTUBE_IMG_URL
+try:
+    from config import API_ID, BOT_TOKEN, MONGO_DB_URI
+except ImportError:
+    LOGGER.error("Config file not found!")
 
 # --- SECURITY FILTER ---
 class SensitiveDataFilter(logging.Filter):
@@ -30,6 +33,7 @@ API_URL = "http://kiru-bot.up.railway.app"
 
 # --- UTILS ---
 def get_clean_id(link: str) -> Optional[str]:
+    """Extracts and sanitizes YouTube Video ID"""
     if "v=" in link:
         video_id = link.split('v=')[-1].split('&')[0]
     elif "youtu.be/" in link:
@@ -41,6 +45,7 @@ def get_clean_id(link: str) -> Optional[str]:
 
 
 async def get_direct_stream_link(link: str, media_type: str) -> Optional[str]:
+    """Generates direct streamable URL via API"""
     video_id = get_clean_id(link)
     if not video_id:
         return None
@@ -59,28 +64,42 @@ async def get_direct_stream_link(link: str, media_type: str) -> Optional[str]:
                     if token:
                         return f"{API_URL}/stream/{video_id}?type={media_type}&token={token}"
     except Exception:
-        pass
+        pass  # Fallback to yt-dlp
     return None
 
 
 def extract_url_from_info(info: dict, prefer_video: bool = False) -> Optional[str]:
+    """
+    Safely extracts a playable URL from yt-dlp info dict.
+    Handles merged formats, single formats, and formats list.
+    
+    - prefer_video=False  → pick audio stream (for music bots)
+    - prefer_video=True   → pick video stream
+    """
+
+    # Case 1: Merged format (e.g. bestvideo+bestaudio) — URLs are inside requested_formats
     requested = info.get("requested_formats")
     if requested:
         if not prefer_video:
+            # Audio-only stream
             for fmt in requested:
                 if fmt.get("acodec", "none") != "none" and fmt.get("url"):
                     return fmt["url"]
         else:
+            # Video stream (with audio if available, else video-only)
             for fmt in requested:
                 if fmt.get("vcodec", "none") != "none" and fmt.get("url"):
                     return fmt["url"]
 
+    # Case 2: Single format — direct URL on info dict
     if info.get("url"):
         return info["url"]
 
+    # Case 3: Formats list — last entry is usually best quality
     formats = info.get("formats", [])
     if formats:
         if not prefer_video:
+            # Pick best audio-only format
             audio_formats = [
                 f for f in formats
                 if f.get("acodec", "none") != "none"
@@ -89,9 +108,11 @@ def extract_url_from_info(info: dict, prefer_video: bool = False) -> Optional[st
             ]
             if audio_formats:
                 return audio_formats[-1]["url"]
+        # Fallback: last format in list
         for fmt in reversed(formats):
             if fmt.get("url"):
                 return fmt["url"]
+
     return None
 
 
@@ -107,6 +128,7 @@ class YouTubeAPI:
         return bool(re.search(self.regex, link))
 
     async def url(self, message: Message) -> Optional[str]:
+        """Extracts URL from message or replied message"""
         messages = [message, message.reply_to_message]
         for msg in messages:
             if not msg:
@@ -124,6 +146,7 @@ class YouTubeAPI:
         return None
 
     async def search(self, query: str, limit: int = 1):
+        """Search videos using youtubesearchpython"""
         try:
             search = VideosSearch(query, limit=limit)
             resp = await search.next()
@@ -146,31 +169,13 @@ class YouTubeAPI:
 
             if not res:
                 return None
-            
             video = res[0]
-            
-            # --- Thumbnail Validation Logic ---
-            thumbnail = None
-            if video.get("thumbnails"):
-                try:
-                    # YouTube se thumbnail link nikalna
-                    temp_thumb = video["thumbnails"][0]["url"].split("?")[0]
-                    # Check karna ki link valid hai ya nahi
-                    if temp_thumb and "http" in temp_thumb:
-                        thumbnail = temp_thumb
-                except Exception:
-                    thumbnail = None
-
-            # Agar thumbnail khali hai (WEBPAGE_MEDIA_EMPTY se bachne ke liye)
-            if not thumbnail:
-                thumbnail = YOUTUBE_IMG_URL
-
             return (
-                video.get("title", "Unknown Title"),
+                video["title"],
                 video.get("duration", "00:00"),
                 int(time_to_seconds(video.get("duration", "00:00"))),
-                thumbnail,
-                video.get("id"),
+                video["thumbnails"][0]["url"].split("?")[0],
+                video["id"],
             )
         except Exception as e:
             LOGGER.error(f"Details Error: {e}")
@@ -180,16 +185,12 @@ class YouTubeAPI:
         det = await self.details(query, videoid)
         if not det:
             return None, None
-        
-        # Final validation for Pyrogram SendMedia
-        actual_thumb = det[3] if det[3] else YOUTUBE_IMG_URL
-            
         track_details = {
             "title": det[0],
-            "link": self.base + det[4] if det[4] else query,
+            "link": self.base + det[4],
             "vidid": det[4],
             "duration_min": det[1],
-            "thumb": actual_thumb,
+            "thumb": det[3],
         }
         return track_details, det[4]
 
@@ -201,31 +202,61 @@ class YouTubeAPI:
         videoid: Union[bool, str] = None,
         **kwargs,
     ) -> Tuple[Optional[str], bool]:
+        """
+        Returns (streamable_url, True) or (None, False).
+
+        Fix for WebpageMediaEmpty:
+        - yt-dlp bestvideo+bestaudio format stores URLs inside
+          `requested_formats`, NOT at the top-level `info['url']`.
+        - extract_url_from_info() handles all three cases correctly.
+        """
         if videoid:
             link = self.base + link
+
         m_type = "video" if video else "audio"
 
+        # --- Step 1: Try fast API stream ---
         stream_link = await get_direct_stream_link(link, m_type)
         if stream_link:
             return stream_link, True
 
+        # --- Step 2: yt-dlp fallback ---
         try:
-            fmt = "bestaudio/best" if not video else "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
-            ydl_opts = {"format": fmt, "quiet": True, "no_warnings": True, "geo_bypass": True, "nocheckcertificate": True, "noplaylist": True}
-            
+            if not video:
+                # Audio: single-stream format, always has top-level URL
+                fmt = "bestaudio/best"
+            else:
+                # Video: prefer mp4 container to avoid remux issues
+                fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+
+            ydl_opts = {
+                "format": fmt,
+                "quiet": True,
+                "no_warnings": True,
+                "geo_bypass": True,
+                "nocheckcertificate": True,
+                # Do NOT merge — we want direct stream URLs, not a local file
+                "noplaylist": True,
+            }
+
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = await asyncio.to_thread(ydl.extract_info, link, download=False)
+                info = await asyncio.to_thread(
+                    ydl.extract_info, link, download=False
+                )
 
             url = extract_url_from_info(info, prefer_video=bool(video))
-            
-            # Khali stream URL check
-            if url and len(url) > 10:
+            if url:
                 return url, True
 
+            LOGGER.warning(f"yt-dlp returned no URL for: {link}")
+
+        except yt_dlp.utils.DownloadError as e:
+            LOGGER.error(f"yt-dlp DownloadError: {e}")
         except Exception as e:
-            LOGGER.error(f"yt-dlp error: {e}")
+            LOGGER.error(f"yt-dlp unexpected error: {e}")
 
         return None, False
+
 
 # Initialize
 YouTube = YouTubeAPI()
