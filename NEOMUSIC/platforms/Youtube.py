@@ -12,7 +12,6 @@ from NEOMUSIC.utils.formatters import time_to_seconds
 from NEOMUSIC import LOGGER
 
 # --- CONFIGURATION ---
-# Seedha aapke config file se variables utha raha hai
 from config import API_ID, BOT_TOKEN, MONGO_DB_URI, YOUTUBE_IMG_URL
 
 # --- SECURITY FILTER ---
@@ -31,7 +30,6 @@ API_URL = "http://kiru-bot.up.railway.app"
 
 # --- UTILS ---
 def get_clean_id(link: str) -> Optional[str]:
-    """Extracts and sanitizes YouTube Video ID"""
     if "v=" in link:
         video_id = link.split('v=')[-1].split('&')[0]
     elif "youtu.be/" in link:
@@ -43,7 +41,6 @@ def get_clean_id(link: str) -> Optional[str]:
 
 
 async def get_direct_stream_link(link: str, media_type: str) -> Optional[str]:
-    """Generates direct streamable URL via API"""
     video_id = get_clean_id(link)
     if not video_id:
         return None
@@ -152,15 +149,19 @@ class YouTubeAPI:
             
             video = res[0]
             
-            # --- CONNECTION WITH YOUTUBE_IMG_URL FROM CONFIG ---
+            # --- Thumbnail Validation Logic ---
             thumbnail = None
             if video.get("thumbnails"):
                 try:
-                    thumbnail = video["thumbnails"][0]["url"].split("?")[0]
-                except (IndexError, KeyError):
+                    # YouTube se thumbnail link nikalna
+                    temp_thumb = video["thumbnails"][0]["url"].split("?")[0]
+                    # Check karna ki link valid hai ya nahi
+                    if temp_thumb and "http" in temp_thumb:
+                        thumbnail = temp_thumb
+                except Exception:
                     thumbnail = None
-            
-            # Agar YouTube thumbnail nahi deta, toh config wala use hoga
+
+            # Agar thumbnail khali hai (WEBPAGE_MEDIA_EMPTY se bachne ke liye)
             if not thumbnail:
                 thumbnail = YOUTUBE_IMG_URL
 
@@ -180,13 +181,15 @@ class YouTubeAPI:
         if not det:
             return None, None
         
-        # WEBPAGE_MEDIA_EMPTY fix: agar thumbnail empty hai toh config wala bhejo
+        # Final validation for Pyrogram SendMedia
+        actual_thumb = det[3] if det[3] else YOUTUBE_IMG_URL
+            
         track_details = {
             "title": det[0],
             "link": self.base + det[4] if det[4] else query,
             "vidid": det[4],
             "duration_min": det[1],
-            "thumb": det[3] if det[3] else YOUTUBE_IMG_URL,
+            "thumb": actual_thumb,
         }
         return track_details, det[4]
 
@@ -215,6 +218,7 @@ class YouTubeAPI:
 
             url = extract_url_from_info(info, prefer_video=bool(video))
             
+            # Khali stream URL check
             if url and len(url) > 10:
                 return url, True
 
