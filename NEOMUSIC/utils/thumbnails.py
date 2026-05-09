@@ -1,4 +1,5 @@
 import logging
+import aiohttp
 from youtubesearchpython.__future__ import VideosSearch
 from config import YOUTUBE_IMG_URL
 
@@ -18,20 +19,39 @@ async def get_thumb(videoid: str) -> str:
 
         data = results_data["result"][0]
         title = data.get("title", "").lower()
-        thumbnail_url = data.get("thumbnails", [{}])[0].get("url", YOUTUBE_IMG_URL)
+        
+        # YouTube API se best quality thumbnail uthana (ye hamesha valid hota hai)
+        thumbnails = data.get("thumbnails", [])
+        if thumbnails:
+            # Last thumbnail usually has the highest resolution provided by API
+            thumbnail_url = thumbnails[-1].get("url", YOUTUBE_IMG_URL)
+        else:
+            thumbnail_url = YOUTUBE_IMG_URL
 
         # SAFETY FILTER LOGIC
-        # If any banned keyword is found in the video title
         if any(word in title for word in BANNED_KEYWORDS):
             logging.info(f"Thumbnail blocked due to sensitive content: {title}")
-            return YOUTUBE_IMG_URL # Show default placeholder image
+            return YOUTUBE_IMG_URL
 
-        # High Resolution Logic: Try to get the max resolution image
-        if "hqdefault.jpg" in thumbnail_url or "mqdefault.jpg" in thumbnail_url:
-            thumbnail_url = thumbnail_url.replace("hqdefault.jpg", "maxresdefault.jpg").replace("mqdefault.jpg", "maxresdefault.jpg")
+        # --- FIX: SAFE HIGH RES LOGIC ---
+        # Sirf tabhi replace karein jab humein pata ho ki video standard HD hai
+        # Par behtar ye hai ki hum API wala hi use karein taaki 400 error na aaye.
+        # Agar aapko risk lena hai toh hqdefault use karein kyunki ye hamesha exist karta hai.
+        
+        if not thumbnail_url or not thumbnail_url.startswith("http"):
+            return YOUTUBE_IMG_URL
 
         return thumbnail_url
 
     except Exception as e:
         logging.error(f"Error fetching filtered thumbnail: {e}")
         return YOUTUBE_IMG_URL
+
+# Optional Helper: Thumbnail exist karta hai ya nahi check karne ke liye (Fast check)
+async def is_valid_thumb(url: str) -> bool:
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.head(url, timeout=5) as resp:
+                return resp.status == 200
+    except:
+        return False
