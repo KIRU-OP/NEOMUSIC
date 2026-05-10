@@ -7,7 +7,7 @@ import yt_dlp
 from typing import Union, Optional, Tuple, List
 from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
-from youtubesearchpython.__future__ import VideosSearch, Playlist
+from youtubesearchpython.__future__ import VideosSearch
 from NEOMUSIC.utils.formatters import time_to_seconds
 from NEOMUSIC import LOGGER
 
@@ -26,6 +26,7 @@ class SensitiveDataFilter(logging.Filter):
 
 logging.getLogger().addFilter(SensitiveDataFilter())
 
+# Note: Agar ye API band hai toh yt-dlp automatically handle karega
 API_URL = "http://kiru-bot.up.railway.app"
 
 # --- UTILS ---
@@ -40,12 +41,50 @@ def get_clean_id(link: str) -> Optional[str]:
     return clean_id if 5 <= len(clean_id) <= 15 else None
 
 
+def extract_url_from_info(info: dict, prefer_video: bool = False) -> Optional[str]:
+    """Extracts the best playable stream URL from yt-dlp info dict."""
+    try:
+        # 1. Check direct URL
+        if info.get("url"):
+            return info["url"]
+
+        # 2. Check requested formats
+        requested = info.get("requested_formats")
+        if requested:
+            if not prefer_video:
+                for fmt in requested:
+                    if fmt.get("acodec") != "none" and fmt.get("url"):
+                        return fmt["url"]
+            else:
+                for fmt in requested:
+                    if fmt.get("vcodec") != "none" and fmt.get("url"):
+                        return fmt["url"]
+
+        # 3. Fallback to all formats
+        formats = info.get("formats", [])
+        if not prefer_video:
+            # Sirf audio formats filter karein
+            audio_formats = [
+                f for f in formats 
+                if f.get("acodec") != "none" and f.get("vcodec") == "none" and f.get("url")
+            ]
+            if audio_formats:
+                return audio_formats[-1]["url"] # Best audio
+        
+        if formats:
+            return formats[-1]["url"] # Sabse last format (usually best)
+            
+    except Exception as e:
+        LOGGER.error(f"Extraction error: {e}")
+    return None
+
+
 async def get_direct_stream_link(link: str, media_type: str) -> Optional[str]:
     video_id = get_clean_id(link)
     if not video_id:
         return None
     try:
-        timeout = aiohttp.ClientTimeout(total=15)
+        timeout = aiohttp.ClientTimeout(total=10)
         async with aiohttp.ClientSession(
             headers={"User-Agent": "Mozilla/5.0"}, timeout=timeout
         ) as session:
@@ -63,64 +102,26 @@ async def get_direct_stream_link(link: str, media_type: str) -> Optional[str]:
     return None
 
 
-def extract_url_from_info(info: dict, prefer_video: bool = False) -> Optional[str]:
-    requested = info.get("requested_formats")
-    if requested:
-        if not prefer_video:
-            for fmt in requested:
-                if fmt.get("acodec", "none") != "none" and fmt.get("url"):
-                    return fmt["url"]
-        else:
-            for fmt in requested:
-                if fmt.get("vcodec", "none") != "none" and fmt.get("url"):
-                    return fmt["url"]
-
-    if info.get("url"):
-        return info["url"]
-
-    formats = info.get("formats", [])
-    if formats:
-        if not prefer_video:
-            audio_formats = [
-                f for f in formats
-                if f.get("acodec", "none") != "none"
-                and f.get("vcodec", "none") == "none"
-                and f.get("url")
-            ]
-            if audio_formats:
-                return audio_formats[-1]["url"]
-        for fmt in reversed(formats):
-            if fmt.get("url"):
-                return fmt["url"]
-    return None
-
-
 class YouTubeAPI:
     def __init__(self):
         self.base = "https://www.youtube.com/watch?v="
         self.regex = r"(?:youtube\.com|youtu\.be)"
-        self.listbase = "https://youtube.com/playlist?list="
 
-    async def exists(self, link: str, videoid: Union[bool, str] = None):
-        if videoid:
-            link = self.base + link
+    async def exists(self, link: str):
         return bool(re.search(self.regex, link))
 
     async def url(self, message: Message) -> Optional[str]:
         messages = [message, message.reply_to_message]
         for msg in messages:
-            if not msg:
-                continue
+            if not msg: continue
             text = msg.text or msg.caption
-            if not text:
-                continue
+            if not text: continue
             if msg.entities:
                 for entity in msg.entities:
                     if entity.type == MessageEntityType.URL:
                         return text[entity.offset: entity.offset + entity.length]
             urls = re.findall(r'(https?://\S+)', text)
-            if urls:
-                return urls[0]
+            if urls: return urls[0]
         return None
 
     async def search(self, query: str, limit: int = 1):
@@ -132,39 +133,34 @@ class YouTubeAPI:
             LOGGER.error(f"Search Error: {e}")
             return []
 
-    async def details(self, link: str, videoid: Union[bool, str] = None):
+    async def details(self, query: str, videoid: Union[bool, str] = None):
         if videoid:
-            link = self.base + link
-        try:
-            if not await self.exists(link):
-                res = await self.search(link, limit=1)
-            else:
-                link = link.split("&")[0]
-                results = VideosSearch(link, limit=1)
-                res_data = await results.next()
-                res = res_data.get("result", [])
+            link = self.base + query if not query.startswith("http") else query
+        else:
+            link = query
 
+        try:
+            # Agar query ek YouTube link hai toh direct details nikalne ki koshish karein
+            if await self.exists(link):
+                # Using yt-dlp for more accurate details if link is provided
+                ydl_opts = {"quiet": True, "no_warnings": True}
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = await asyncio.to_thread(ydl.extract_info, link, download=False)
+                    title = info.get("title", "Unknown Title")
+                    duration_sec = info.get("duration", 0)
+                    duration_min = f"{duration_sec // 60:02d}:{duration_sec % 60:02d}"
+                    thumbnail = info.get("thumbnail") or YOUTUBE_IMG_URL
+                    vidid = info.get("id")
+                    return title, duration_min, duration_sec, thumbnail, vidid
+            
+            # Agar query text hai toh search karein
+            res = await self.search(link, limit=1)
             if not res:
                 return None
             
             video = res[0]
+            thumbnail = video.get("thumbnails")[0]["url"].split("?")[0] if video.get("thumbnails") else YOUTUBE_IMG_URL
             
-            # --- Thumbnail Validation Logic ---
-            thumbnail = None
-            if video.get("thumbnails"):
-                try:
-                    # YouTube se thumbnail link nikalna
-                    temp_thumb = video["thumbnails"][0]["url"].split("?")[0]
-                    # Check karna ki link valid hai ya nahi
-                    if temp_thumb and "http" in temp_thumb:
-                        thumbnail = temp_thumb
-                except Exception:
-                    thumbnail = None
-
-            # Agar thumbnail khali hai (WEBPAGE_MEDIA_EMPTY se bachne ke liye)
-            if not thumbnail:
-                thumbnail = YOUTUBE_IMG_URL
-
             return (
                 video.get("title", "Unknown Title"),
                 video.get("duration", "00:00"),
@@ -181,15 +177,13 @@ class YouTubeAPI:
         if not det:
             return None, None
         
-        # Final validation for Pyrogram SendMedia
-        actual_thumb = det[3] if det[3] else YOUTUBE_IMG_URL
-            
         track_details = {
             "title": det[0],
-            "link": self.base + det[4] if det[4] else query,
+            "link": self.base + det[4],
             "vidid": det[4],
             "duration_min": det[1],
-            "thumb": actual_thumb,
+            "duration_sec": det[2],
+            "thumb": det[3],
         }
         return track_details, det[4]
 
@@ -203,29 +197,48 @@ class YouTubeAPI:
     ) -> Tuple[Optional[str], bool]:
         if videoid:
             link = self.base + link
+        
         m_type = "video" if video else "audio"
 
+        # 1. Pehle Direct API try karein
         stream_link = await get_direct_stream_link(link, m_type)
         if stream_link:
             return stream_link, True
 
+        # 2. Agar API fail ho toh yt-dlp use karein (With Bypass Headers)
         try:
             fmt = "bestaudio/best" if not video else "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
-            ydl_opts = {"format": fmt, "quiet": True, "no_warnings": True, "geo_bypass": True, "nocheckcertificate": True, "noplaylist": True}
+            
+            ydl_opts = {
+                "format": fmt,
+                "quiet": True,
+                "no_warnings": True,
+                "geo_bypass": True,
+                "nocheckcertificate": True,
+                "noplaylist": True,
+                # YouTube Bot Blocking bypass karne ke liye headers
+                "headers": {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.5",
+                    "Referer": "https://www.google.com/",
+                }
+            }
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = await asyncio.to_thread(ydl.extract_info, link, download=False)
+                if not info:
+                    return None, False
 
             url = extract_url_from_info(info, prefer_video=bool(video))
             
-            # Khali stream URL check
             if url and len(url) > 10:
                 return url, True
 
         except Exception as e:
-            LOGGER.error(f"yt-dlp error: {e}")
+            LOGGER.error(f"yt-dlp final error: {e}")
 
         return None, False
 
-# Initialize
+# Global Instance
 YouTube = YouTubeAPI()
