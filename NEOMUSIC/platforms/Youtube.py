@@ -9,8 +9,8 @@ from pyrogram.enums import MessageEntityType
 from pyrogram.types import Message
 from youtubesearchpython.__future__ import VideosSearch
 
-from NEOMUSIC.utils.database import is_on_off
-from NEOMUSIC.utils.formatters import time_to_seconds
+from RishuMusic.utils.database import is_on_off
+from RishuMusic.utils.formatters import time_to_seconds
 
 # ══════════════════════════════════════════════════════════════════
 #  Optional (aur bhi strong ban protection):
