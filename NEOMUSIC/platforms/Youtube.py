@@ -13,17 +13,9 @@ from NEOMUSIC.utils.database import is_on_off
 from NEOMUSIC.utils.formatters import time_to_seconds
 
 # ══════════════════════════════════════════════════════════════════
-#  Anti-Ban Strategy — Bina Manual Cookies ke:
-#
-#  ✅ Android/iOS player client  → YouTube mobile app simulate karta
-#     hai, bot detection bypass ho jata hai automatically
-#  ✅ Exponential backoff retry  → fail hone par wait karke retry
-#  ✅ Sleep intervals            → rate limit se bachao
-#  ✅ Multi-client fallback      → android fail → ios → web
-#
 #  Optional (aur bhi strong ban protection):
 #    pip install yt-dlp-youtube-oauth2
-#    yt-dlp --username oauth2 --password "" https://youtu.be/dQw4w9WgXcQ
+#    yt-dlp --username oauth2 --password "" https://t.me/about_kiru_op
 #    → Ek baar browser mein login karo, token hamesha ke liye save
 # ══════════════════════════════════════════════════════════════════
 
