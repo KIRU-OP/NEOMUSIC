@@ -92,6 +92,31 @@ def _clean(link: str, videoid=None, base=None) -> str:
     return link.split("&")[0] if "&" in link else link
 
 
+async def _get_stream_url(link: str, fmt: str) -> str:
+    """
+    yt-dlp -g se direct stream URL fetch karo — kuch bhi download nahi hoga.
+
+    Returns:
+        str: Direct playable stream URL
+    Raises:
+        ValueError: Agar URL fetch fail ho jaye
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "yt-dlp", "-g",
+        "-f", fmt,
+        "--extractor-args", "youtube:player_client=android,ios,web",
+        "--no-warnings",
+        link,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if stdout:
+        # Pehli line = stream URL (video+audio alag hone par dono lines aati hain)
+        return stdout.decode().strip().split("\n")[0]
+    raise ValueError(f"Stream URL fetch failed: {stderr.decode().strip()}")
+
+
 class YouTubeAPI:
     def __init__(self):
         self.base     = "https://www.youtube.com/watch?v="
@@ -156,19 +181,13 @@ class YouTubeAPI:
 
     async def video(self, link: str, videoid: Union[bool, str] = None):
         link = self._l(link, videoid)
-        proc = await asyncio.create_subprocess_exec(
-            "yt-dlp", "-g",
-            "-f", "best[height<=?720][width<=?1280]",
-            "--extractor-args", "youtube:player_client=android,ios,web",
-            "--no-warnings",
-            link,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-        if stdout:
-            return 1, stdout.decode().split("\n")[0]
-        return 0, stderr.decode()
+        try:
+            stream_url = await _get_stream_url(
+                link, "best[height<=?720][width<=?1280]"
+            )
+            return 1, stream_url
+        except ValueError as e:
+            return 0, str(e)
 
     # ── playlist ──────────────────────────────────────────────────────────────
 
@@ -182,7 +201,6 @@ class YouTubeAPI:
             f'--extractor-args "youtube:player_client=android,ios" '
             f'--skip-download "{link}"'
         )
-        # FIX: iterate karte waqt remove nahi — list comprehension use karo
         return [v for v in raw.split("\n") if v.strip()]
 
     # ── track ─────────────────────────────────────────────────────────────────
@@ -244,6 +262,7 @@ class YouTubeAPI:
     ):
         if videoid:
             link = self.base + link
+
         loop = asyncio.get_running_loop()
 
         def _find(vid_id: str):
@@ -251,83 +270,45 @@ class YouTubeAPI:
             matches = glob.glob(os.path.join("downloads", f"{vid_id}.*"))
             return matches[0] if matches else None
 
-        # ── 1. Song Video ─────────────────────────────────────────────────────
-        def song_video_dl():
-            with yt_dlp.YoutubeDL(_ydl_opts({
-                "format": f"{format_id}+140",
-                "outtmpl": f"downloads/{title}",
-                "prefer_ffmpeg": True,
-                "merge_output_format": "mp4",
-            })) as ydl:
-                ydl.download([link])
-
+        # ── 1. Song Video → Direct Stream URL (no download) ───────────────────
+        # songvideo = specific format_id chahiye, isliye -g ke saath format pass karo
         if songvideo:
-            await loop.run_in_executor(None, song_video_dl)
-            return f"downloads/{title}.mp4", True
+            stream_url = await _get_stream_url(
+                link, f"{format_id}+140"  # video + audio stream
+            )
+            return stream_url, None  # None = streamed, file nahi
 
-        # ── 2. Song Audio ─────────────────────────────────────────────────────
-        def song_audio_dl():
-            with yt_dlp.YoutubeDL(_ydl_opts({
-                "format": format_id,
-                "outtmpl": f"downloads/{title}.%(ext)s",
-                "prefer_ffmpeg": True,
-                "postprocessors": [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }],
-            })) as ydl:
-                ydl.download([link])
-
+        # ── 2. Song Audio → Direct Stream URL (no download) ───────────────────
         if songaudio:
-            await loop.run_in_executor(None, song_audio_dl)
-            return f"downloads/{title}.mp3", True
+            stream_url = await _get_stream_url(link, format_id)
+            return stream_url, None  # None = streamed, file nahi
 
-        # ── 3. Video Download ─────────────────────────────────────────────────
-        def video_dl() -> str:
-            with yt_dlp.YoutubeDL(_ydl_opts({
-                "format": "(bestvideo[height<=?720][width<=?1280][ext=mp4])+(bestaudio[ext=m4a])",
-                "outtmpl": "downloads/%(id)s.%(ext)s",
-            })) as ydl:
-                info   = ydl.extract_info(link, download=False)
-                vid_id = info["id"]
-                cached = _find(vid_id)
-                if cached:
-                    return cached
-                ydl.download([link])
-                return _find(vid_id) or f"downloads/{vid_id}.mp4"
-
+        # ── 3. Video → Stream ya Download (is_on_off flag se decide) ──────────
         if video:
             if await is_on_off(1):
+                # Download mode: file disk par save karo
+                def video_dl() -> str:
+                    with yt_dlp.YoutubeDL(_ydl_opts({
+                        "format": "(bestvideo[height<=?720][width<=?1280][ext=mp4])+(bestaudio[ext=m4a])",
+                        "outtmpl": "downloads/%(id)s.%(ext)s",
+                    })) as ydl:
+                        info   = ydl.extract_info(link, download=False)
+                        vid_id = info["id"]
+                        cached = _find(vid_id)
+                        if cached:
+                            return cached
+                        ydl.download([link])
+                        return _find(vid_id) or f"downloads/{vid_id}.mp4"
+
                 return await loop.run_in_executor(None, video_dl), True
             else:
-                proc = await asyncio.create_subprocess_exec(
-                    "yt-dlp", "-g",
-                    "-f", "best[height<=?720][width<=?1280]",
-                    "--extractor-args", "youtube:player_client=android,ios,web",
-                    "--no-warnings",
-                    link,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
+                # Stream mode: sirf URL fetch karo, kuch download mat karo
+                stream_url = await _get_stream_url(
+                    link, "best[height<=?720][width<=?1280]"
                 )
-                stdout, stderr = await proc.communicate()
-                if stdout:
-                    return stdout.decode().split("\n")[0], None
-                # FIX: pehle bare `return` tha — ab proper error
-                raise ValueError(f"Stream URL fetch failed: {stderr.decode()}")
+                return stream_url, None
 
-        # ── 4. Audio (default) ────────────────────────────────────────────────
-        def audio_dl() -> str:
-            with yt_dlp.YoutubeDL(_ydl_opts({
-                "format": "bestaudio/best",
-                "outtmpl": "downloads/%(id)s.%(ext)s",
-            })) as ydl:
-                info   = ydl.extract_info(link, download=False)
-                vid_id = info["id"]
-                cached = _find(vid_id)
-                if cached:
-                    return cached
-                ydl.download([link])
-                return _find(vid_id) or f"downloads/{vid_id}.{info['ext']}"
-
-        return await loop.run_in_executor(None, audio_dl), True
+        # ── 4. Audio (default) → Direct Stream URL (no download) ──────────────
+        # Seedha bestaudio ka stream URL lo — disk touch nahi hogi
+        stream_url = await _get_stream_url(link, "bestaudio/best")
+        return stream_url, None
