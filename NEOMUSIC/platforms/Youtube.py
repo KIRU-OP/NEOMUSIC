@@ -13,18 +13,35 @@ from NEOMUSIC.utils.database import is_on_off
 from NEOMUSIC.utils.formatters import time_to_seconds
 
 # ══════════════════════════════════════════════════════════════════
-#  Optional (aur bhi strong ban protection):
-#    pip install yt-dlp-youtube-oauth2
-#    yt-dlp --username oauth2 --password "" https://t.me/about_kiru_op
-#    → Ek baar browser mein login karo, token hamesha ke liye save
+#  FIXED VERSION — Anti-ban + Proper stream URL fetch
+#  Changes:
+#    1. player_client mein "mweb" aur "tv_embedded" add kiya
+#    2. _get_stream_url mein proper fallback chain
+#    3. PO Token support (agar set ho)
+#    4. yt-dlp latest version check reminder
+#    5. Cookies file support (optional but recommended)
+#
+#  IMPORTANT: Pehle yeh run karo:
+#    pip install -U yt-dlp
+#    yt-dlp -U
 # ══════════════════════════════════════════════════════════════════
 
+# Optional: Agar cookies.txt hai to yahan path do (Netscape format)
+# Browser se export karo: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp
+COOKIES_FILE = os.environ.get("YTDLP_COOKIES", "")  # e.g. "/app/cookies.txt"
+
+# OAuth2 token (yt-dlp-youtube-oauth2 plugin se)
 OAUTH2_TOKEN = os.path.expanduser("~/.cache/yt-dlp/youtube-oauth2.token")
 
 # Android YouTube app ka User-Agent
 ANDROID_UA = (
-    "com.google.android.youtube/17.36.4 (Linux; U; Android 12; GB) gzip"
+    "com.google.android.youtube/19.09.37 (Linux; U; Android 13; GB) gzip"
 )
+
+# Player clients — priority order mein (sabse reliable pehle)
+# "mweb" = mobile web, YouTube ke nayi bot detection se bachata hai
+# "tv_embedded" = Smart TV client, bahut kam flagged hota hai
+PLAYER_CLIENTS = ["mweb", "tv_embedded", "android", "ios", "web"]
 
 
 async def shell_cmd(cmd):
@@ -45,39 +62,48 @@ async def shell_cmd(cmd):
 def _ydl_opts(extra: dict = None) -> dict:
     """
     Anti-ban optimized yt-dlp options.
-
-    Android player_client = YouTube mobile simulate karta hai.
-    Bot detection automatically bypass — cookies ki zaroorat nahi.
+    mweb + tv_embedded = best current bypass combination.
     """
     opts = {
-        # ── Core anti-ban: Android/iOS client ──────────────────────
+        # ── Core anti-ban ────────────────────────────────────────────
         "extractor_args": {
             "youtube": {
-                # android pehle try hoga, fail hone par ios, phir web
-                "player_client": ["android", "ios", "web"],
+                "player_client": PLAYER_CLIENTS,
+                # po_token set karna chahte ho to:
+                # "po_token": ["web+YOUR_PO_TOKEN_HERE"],
             }
         },
-        "http_headers": {"User-Agent": ANDROID_UA},
+        "http_headers": {
+            "User-Agent": ANDROID_UA,
+            "Accept-Language": "en-US,en;q=0.9",
+        },
 
-        # ── Rate limit se bachao ────────────────────────────────────
-        "sleep_interval": 1,
-        "max_sleep_interval": 4,
+        # ── Rate limit protection ────────────────────────────────────
+        "sleep_interval": 2,
+        "max_sleep_interval": 5,
         "sleep_interval_requests": 1,
 
-        # ── Retry with exponential backoff ──────────────────────────
-        "retries": 6,
-        "fragment_retries": 6,
-        "retry_sleep_functions": {"http": lambda n: min(2 ** n, 30)},
+        # ── Retry with exponential backoff ───────────────────────────
+        "retries": 8,
+        "fragment_retries": 8,
+        "retry_sleep_functions": {"http": lambda n: min(2 ** n, 60)},
 
-        # ── General ─────────────────────────────────────────────────
+        # ── General ──────────────────────────────────────────────────
         "geo_bypass": True,
         "nocheckcertificate": True,
         "quiet": True,
         "no_warnings": True,
+
+        # ── Format fallback ──────────────────────────────────────────
+        "ignoreerrors": False,
     }
 
-    # Agar OAuth2 plugin se pehle login kiya hai to auto-use karo
-    if os.path.exists(OAUTH2_TOKEN):
+    # Cookies file use karo agar available hai
+    if COOKIES_FILE and os.path.exists(COOKIES_FILE):
+        opts["cookiefile"] = COOKIES_FILE
+
+    # OAuth2 plugin se pehle login kiya hai to auto-use karo
+    elif os.path.exists(OAUTH2_TOKEN):
         opts["username"] = "oauth2"
         opts["password"] = ""
 
@@ -94,27 +120,84 @@ def _clean(link: str, videoid=None, base=None) -> str:
 
 async def _get_stream_url(link: str, fmt: str) -> str:
     """
-    yt-dlp -g se direct stream URL fetch karo — kuch bhi download nahi hoga.
-
+    yt-dlp se direct stream URL fetch karo with full fallback chain.
+    
+    Strategy:
+      1. Pehle mweb + tv_embedded try karo (most reliable)
+      2. Fail hone par android + ios
+      3. Last resort: web client
+      
     Returns:
         str: Direct playable stream URL
     Raises:
-        ValueError: Agar URL fetch fail ho jaye
+        ValueError: Agar sab clients fail kar dein
     """
-    proc = await asyncio.create_subprocess_exec(
+    
+    # Build base args
+    base_args = [
         "yt-dlp", "-g",
         "-f", fmt,
-        "--extractor-args", "youtube:player_client=android,ios,web",
         "--no-warnings",
-        link,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
-    if stdout:
-        # Pehli line = stream URL (video+audio alag hone par dono lines aati hain)
-        return stdout.decode().strip().split("\n")[0]
-    raise ValueError(f"Stream URL fetch failed: {stderr.decode().strip()}")
+        "--geo-bypass",
+        "--no-check-certificates",
+        "--retries", "5",
+    ]
+    
+    # Cookies add karo agar available hai
+    if COOKIES_FILE and os.path.exists(COOKIES_FILE):
+        base_args += ["--cookies", COOKIES_FILE]
+    elif os.path.exists(OAUTH2_TOKEN):
+        base_args += ["--username", "oauth2", "--password", ""]
+
+    # Try karo different client combinations
+    client_combos = [
+        "mweb,tv_embedded",      # Best: modern clients
+        "android,ios",           # Fallback 1
+        "android_embedded,ios",  # Fallback 2  
+        "web",                   # Last resort
+    ]
+
+    last_error = None
+    for clients in client_combos:
+        args = base_args + [
+            "--extractor-args", f"youtube:player_client={clients}",
+            link,
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+
+        if stdout:
+            url = stdout.decode().strip().split("\n")[0]
+            if url.startswith("http"):
+                return url
+
+        err = stderr.decode().strip()
+        last_error = err
+
+        # Agar "Sign in" ya "bot" error aaye to cookies ki zaroorat hai
+        if any(kw in err.lower() for kw in ["sign in", "confirm", "bot", "captcha", "private"]):
+            # Cookies nahi hain to seedha fail karo — retry useless hai
+            raise ValueError(
+                f"YouTube authentication chahiye. Cookies file set karo.\n"
+                f"Guide: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp\n"
+                f"Error: {err}"
+            )
+
+    raise ValueError(f"Sab clients fail kar gaye. Last error: {last_error}")
+
+
+async def _search_yt(query: str, limit: int = 1):
+    """Safe YouTube search with error handling."""
+    try:
+        results = VideosSearch(query, limit=limit)
+        data = await results.next()
+        return data.get("result", [])
+    except Exception:
+        return []
 
 
 class YouTubeAPI:
@@ -156,26 +239,27 @@ class YouTubeAPI:
 
     async def details(self, link: str, videoid: Union[bool, str] = None):
         link = self._l(link, videoid)
-        results = VideosSearch(link, limit=1)
-        for r in (await results.next())["result"]:
-            dur_min = r["duration"]
+        results = await _search_yt(link, limit=1)
+        for r in results:
+            dur_min = r.get("duration") or "0:00"
             dur_sec = 0 if not dur_min else int(time_to_seconds(dur_min))
-            return r["title"], dur_min, dur_sec, r["thumbnails"][0]["url"].split("?")[0], r["id"]
+            thumb = (r.get("thumbnails") or [{}])[0].get("url", "").split("?")[0]
+            return r["title"], dur_min, dur_sec, thumb, r["id"]
 
     async def title(self, link: str, videoid: Union[bool, str] = None) -> str:
         link = self._l(link, videoid)
-        for r in (await (VideosSearch(link, limit=1)).next())["result"]:
+        for r in await _search_yt(link, limit=1):
             return r["title"]
 
     async def duration(self, link: str, videoid: Union[bool, str] = None) -> str:
         link = self._l(link, videoid)
-        for r in (await (VideosSearch(link, limit=1)).next())["result"]:
-            return r["duration"]
+        for r in await _search_yt(link, limit=1):
+            return r.get("duration", "0:00")
 
     async def thumbnail(self, link: str, videoid: Union[bool, str] = None) -> str:
         link = self._l(link, videoid)
-        for r in (await (VideosSearch(link, limit=1)).next())["result"]:
-            return r["thumbnails"][0]["url"].split("?")[0]
+        for r in await _search_yt(link, limit=1):
+            return (r.get("thumbnails") or [{}])[0].get("url", "").split("?")[0]
 
     # ── video (streaming URL) ─────────────────────────────────────────────────
 
@@ -183,7 +267,12 @@ class YouTubeAPI:
         link = self._l(link, videoid)
         try:
             stream_url = await _get_stream_url(
-                link, "best[height<=?720][width<=?1280]"
+                link,
+                # Best video+audio combined stream, 720p max
+                "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]"
+                "/best[height<=720]"
+                "/bestvideo[height<=720]+bestaudio"
+                "/best"
             )
             return 1, stream_url
         except ValueError as e:
@@ -196,10 +285,16 @@ class YouTubeAPI:
             link = self.listbase + link
         if "&" in link:
             link = link.split("&")[0]
+
+        # Build cookies arg agar available
+        cookie_arg = ""
+        if COOKIES_FILE and os.path.exists(COOKIES_FILE):
+            cookie_arg = f'--cookies "{COOKIES_FILE}"'
+
         raw = await shell_cmd(
             f'yt-dlp -i --get-id --flat-playlist --playlist-end {limit} '
-            f'--extractor-args "youtube:player_client=android,ios" '
-            f'--skip-download "{link}"'
+            f'--extractor-args "youtube:player_client=mweb,tv_embedded,android" '
+            f'--skip-download {cookie_arg} "{link}"'
         )
         return [v for v in raw.split("\n") if v.strip()]
 
@@ -207,13 +302,14 @@ class YouTubeAPI:
 
     async def track(self, link: str, videoid: Union[bool, str] = None):
         link = self._l(link, videoid)
-        for r in (await (VideosSearch(link, limit=1)).next())["result"]:
+        for r in await _search_yt(link, limit=1):
+            thumb = (r.get("thumbnails") or [{}])[0].get("url", "").split("?")[0]
             return {
-                "title": r["title"],
-                "link": r["link"],
-                "vidid": r["id"],
-                "duration_min": r["duration"],
-                "thumb": r["thumbnails"][0]["url"].split("?")[0],
+                "title":        r["title"],
+                "link":         r["link"],
+                "vidid":        r["id"],
+                "duration_min": r.get("duration", "0:00"),
+                "thumb":        thumb,
             }, r["id"]
 
     # ── formats ───────────────────────────────────────────────────────────────
@@ -221,31 +317,41 @@ class YouTubeAPI:
     async def formats(self, link: str, videoid: Union[bool, str] = None):
         link = self._l(link, videoid)
         out = []
-        with yt_dlp.YoutubeDL(_ydl_opts()) as ydl:
-            info = ydl.extract_info(link, download=False)
-            for fmt in info.get("formats", []):
-                fmt_str = str(fmt.get("format", ""))
-                if not fmt_str or "dash" in fmt_str.lower():
-                    continue
-                if not all(k in fmt for k in ("filesize", "format_id", "ext", "format_note")):
-                    continue
-                out.append({
-                    "format":      fmt_str,
-                    "filesize":    fmt["filesize"],
-                    "format_id":   fmt["format_id"],
-                    "ext":         fmt["ext"],
-                    "format_note": fmt["format_note"],
-                    "yturl":       link,
-                })
+        loop = asyncio.get_running_loop()
+
+        def _extract():
+            with yt_dlp.YoutubeDL(_ydl_opts()) as ydl:
+                return ydl.extract_info(link, download=False)
+
+        try:
+            info = await loop.run_in_executor(None, _extract)
+        except Exception as e:
+            return [], link
+
+        for fmt in info.get("formats", []):
+            fmt_str = str(fmt.get("format", ""))
+            if not fmt_str or "dash" in fmt_str.lower():
+                continue
+            if not all(k in fmt for k in ("filesize", "format_id", "ext", "format_note")):
+                continue
+            out.append({
+                "format":      fmt_str,
+                "filesize":    fmt["filesize"],
+                "format_id":   fmt["format_id"],
+                "ext":         fmt["ext"],
+                "format_note": fmt["format_note"],
+                "yturl":       link,
+            })
         return out, link
 
     # ── slider ────────────────────────────────────────────────────────────────
 
     async def slider(self, link: str, query_type: int, videoid: Union[bool, str] = None):
         link = self._l(link, videoid)
-        result = (await (VideosSearch(link, limit=10)).next()).get("result", [])
+        result = await _search_yt(link, limit=10)
         item = result[query_type]
-        return item["title"], item["duration"], item["thumbnails"][0]["url"].split("?")[0], item["id"]
+        thumb = (item.get("thumbnails") or [{}])[0].get("url", "").split("?")[0]
+        return item["title"], item.get("duration", "0:00"), thumb, item["id"]
 
     # ── download ──────────────────────────────────────────────────────────────
 
@@ -266,31 +372,39 @@ class YouTubeAPI:
         loop = asyncio.get_running_loop()
 
         def _find(vid_id: str):
-            """Downloaded file glob se dhundo — ext vary kar sakti hai."""
             matches = glob.glob(os.path.join("downloads", f"{vid_id}.*"))
             return matches[0] if matches else None
 
-        # ── 1. Song Video → Direct Stream URL (no download) ───────────────────
-        # songvideo = specific format_id chahiye, isliye -g ke saath format pass karo
+        # ── 1. Song Video → Direct Stream URL ────────────────────────────────
         if songvideo:
-            stream_url = await _get_stream_url(
-                link, f"{format_id}+140"  # video + audio stream
-            )
-            return stream_url, None  # None = streamed, file nahi
+            try:
+                stream_url = await _get_stream_url(link, f"{format_id}+140")
+                return stream_url, None
+            except ValueError as e:
+                raise Exception(f"Song video stream failed: {e}")
 
-        # ── 2. Song Audio → Direct Stream URL (no download) ───────────────────
+        # ── 2. Song Audio → Direct Stream URL ────────────────────────────────
         if songaudio:
-            stream_url = await _get_stream_url(link, format_id)
-            return stream_url, None  # None = streamed, file nahi
+            try:
+                stream_url = await _get_stream_url(link, format_id)
+                return stream_url, None
+            except ValueError as e:
+                raise Exception(f"Song audio stream failed: {e}")
 
-        # ── 3. Video → Stream ya Download (is_on_off flag se decide) ──────────
+        # ── 3. Video → Download or Stream ────────────────────────────────────
         if video:
             if await is_on_off(1):
-                # Download mode: file disk par save karo
+                # Download mode
                 def video_dl() -> str:
                     with yt_dlp.YoutubeDL(_ydl_opts({
-                        "format": "(bestvideo[height<=?720][width<=?1280][ext=mp4])+(bestaudio[ext=m4a])",
+                        "format": (
+                            "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]"
+                            "/bestvideo[height<=720]+bestaudio"
+                            "/best[height<=720]"
+                            "/best"
+                        ),
                         "outtmpl": "downloads/%(id)s.%(ext)s",
+                        "merge_output_format": "mp4",
                     })) as ydl:
                         info   = ydl.extract_info(link, download=False)
                         vid_id = info["id"]
@@ -302,13 +416,24 @@ class YouTubeAPI:
 
                 return await loop.run_in_executor(None, video_dl), True
             else:
-                # Stream mode: sirf URL fetch karo, kuch download mat karo
-                stream_url = await _get_stream_url(
-                    link, "best[height<=?720][width<=?1280]"
-                )
-                return stream_url, None
+                # Stream mode
+                try:
+                    stream_url = await _get_stream_url(
+                        link,
+                        "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]"
+                        "/best[height<=720]"
+                        "/best"
+                    )
+                    return stream_url, None
+                except ValueError as e:
+                    raise Exception(f"Video stream failed: {e}")
 
-        # ── 4. Audio (default) → Direct Stream URL (no download) ──────────────
-        # Seedha bestaudio ka stream URL lo — disk touch nahi hogi
-        stream_url = await _get_stream_url(link, "bestaudio/best")
-        return stream_url, None
+        # ── 4. Audio (default) → Direct Stream URL ────────────────────────────
+        try:
+            stream_url = await _get_stream_url(
+                link,
+                "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best"
+            )
+            return stream_url, None
+        except ValueError as e:
+            raise Exception(f"Audio stream failed: {e}")
