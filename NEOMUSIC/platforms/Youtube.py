@@ -29,7 +29,7 @@ class SensitiveDataFilter(logging.Filter):
 
 logging.getLogger().addFilter(SensitiveDataFilter())
 
-API_URL = "http://kiru-bot.up.railway.app"
+API_URL = "kiru-bots.up.railway.app"
 
 # --- UTILS ---
 def get_clean_id(link: str) -> Optional[str]:
