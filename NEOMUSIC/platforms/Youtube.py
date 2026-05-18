@@ -130,11 +130,15 @@ def extract_url_from_info(info: dict, prefer_video: bool = False) -> Optional[st
 
 
 async def get_direct_stream_link(link: str, media_type: str) -> Optional[str]:
+    """
+    main.py ke /download endpoint se stream URL lo.
+    Response format: {"title": "...", "stream": "https://...", "source": "..."}
+    """
     video_id = get_clean_id(link)
     if not video_id:
         return None
     try:
-        timeout = aiohttp.ClientTimeout(total=10)
+        timeout = aiohttp.ClientTimeout(total=15)
         async with aiohttp.ClientSession(
             headers={"User-Agent": "Mozilla/5.0"}, timeout=timeout
         ) as session:
@@ -144,11 +148,16 @@ async def get_direct_stream_link(link: str, media_type: str) -> Optional[str]:
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    token = data.get("download_token")
-                    if token:
-                        return f"{API_URL}/stream/{video_id}?type={media_type}&token={token}"
-    except Exception:
-        pass
+                    # main.py "stream" key return karta hai, "download_token" nahi
+                    stream = data.get("stream")
+                    if stream and len(stream) > 10:
+                        LOGGER.info(f"[API] Stream mila ({data.get('source', '?')}): {video_id}")
+                        return stream
+                    err = data.get("error")
+                    if err:
+                        LOGGER.warning(f"[API] Error response: {err}")
+    except Exception as e:
+        LOGGER.warning(f"[API] Request fail: {e}")
     return None
 
 
