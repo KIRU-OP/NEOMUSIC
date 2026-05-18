@@ -26,8 +26,16 @@ class SensitiveDataFilter(logging.Filter):
 
 logging.getLogger().addFilter(SensitiveDataFilter())
 
-# Note: Agar ye API band hai toh yt-dlp automatically handle karega
 API_URL = "https://vip-bots.up.railway.app"
+
+# --- Player client strategies (iOS removed — YouTube ne block kiya) ---
+PLAYER_CLIENTS = [
+    "android",
+    "android_creator",
+    "web",
+    "mweb",
+    "tv_embedded",
+]
 
 # --- UTILS ---
 def get_clean_id(link: str) -> Optional[str]:
@@ -41,14 +49,58 @@ def get_clean_id(link: str) -> Optional[str]:
     return clean_id if 5 <= len(clean_id) <= 15 else None
 
 
+def _base_ydl_opts(fmt: str = "bestaudio/best", client: str = "android") -> dict:
+    """Common yt-dlp options with specified player client."""
+    return {
+        "format": fmt,
+        "quiet": True,
+        "no_warnings": True,
+        "geo_bypass": True,
+        "nocheckcertificate": True,
+        "noplaylist": True,
+        "extractor_args": {
+            "youtube": {
+                "player_client": [client],
+            }
+        },
+        "headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.youtube.com/",
+        },
+    }
+
+
+async def _extract_info_with_fallback(link: str, fmt: str = "bestaudio/best") -> Optional[dict]:
+    """
+    Multiple player clients try karo — jab tak ek kaam kare.
+    Returns yt-dlp info dict or None.
+    """
+    for client in PLAYER_CLIENTS:
+        try:
+            ydl_opts = _base_ydl_opts(fmt=fmt, client=client)
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = await asyncio.to_thread(ydl.extract_info, link, download=False)
+            if info:
+                LOGGER.info(f"[yt-dlp:{client}] Success — {link[:50]}")
+                return info
+        except Exception as e:
+            LOGGER.warning(f"[yt-dlp:{client}] Failed — {e}")
+            continue
+    LOGGER.error(f"[yt-dlp] Saare clients fail ho gaye: {link}")
+    return None
+
+
 def extract_url_from_info(info: dict, prefer_video: bool = False) -> Optional[str]:
     """Extracts the best playable stream URL from yt-dlp info dict."""
     try:
-        # 1. Check direct URL
         if info.get("url"):
             return info["url"]
 
-        # 2. Check requested formats
         requested = info.get("requested_formats")
         if requested:
             if not prefer_video:
@@ -60,20 +112,18 @@ def extract_url_from_info(info: dict, prefer_video: bool = False) -> Optional[st
                     if fmt.get("vcodec") != "none" and fmt.get("url"):
                         return fmt["url"]
 
-        # 3. Fallback to all formats
         formats = info.get("formats", [])
         if not prefer_video:
-            # Sirf audio formats filter karein
             audio_formats = [
-                f for f in formats 
+                f for f in formats
                 if f.get("acodec") != "none" and f.get("vcodec") == "none" and f.get("url")
             ]
             if audio_formats:
-                return audio_formats[-1]["url"] # Best audio
-        
+                return audio_formats[-1]["url"]
+
         if formats:
-            return formats[-1]["url"] # Sabse last format (usually best)
-            
+            return formats[-1]["url"]
+
     except Exception as e:
         LOGGER.error(f"Extraction error: {e}")
     return None
@@ -140,27 +190,28 @@ class YouTubeAPI:
             link = query
 
         try:
-            # Agar query ek YouTube link hai toh direct details nikalne ki koshish karein
             if await self.exists(link):
-                # Using yt-dlp for more accurate details if link is provided
-                ydl_opts = {"quiet": True, "no_warnings": True}
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = await asyncio.to_thread(ydl.extract_info, link, download=False)
+                # ✅ FIX: Multiple player clients try karo
+                info = await _extract_info_with_fallback(link, fmt="bestaudio/best")
+                if info:
                     title = info.get("title", "Unknown Title")
                     duration_sec = info.get("duration", 0)
                     duration_min = f"{duration_sec // 60:02d}:{duration_sec % 60:02d}"
                     thumbnail = info.get("thumbnail") or YOUTUBE_IMG_URL
                     vidid = info.get("id")
                     return title, duration_min, duration_sec, thumbnail, vidid
-            
-            # Agar query text hai toh search karein
+
+            # Text search fallback
             res = await self.search(link, limit=1)
             if not res:
+                LOGGER.error(f"Details: search ne kuch nahi diya — {query}")
                 return None
-            
+
             video = res[0]
-            thumbnail = video.get("thumbnails")[0]["url"].split("?")[0] if video.get("thumbnails") else YOUTUBE_IMG_URL
-            
+            thumbnail = (
+                video.get("thumbnails")[0]["url"].split("?")[0]
+                if video.get("thumbnails") else YOUTUBE_IMG_URL
+            )
             return (
                 video.get("title", "Unknown Title"),
                 video.get("duration", "00:00"),
@@ -175,8 +226,9 @@ class YouTubeAPI:
     async def track(self, query: str, videoid: Union[bool, str] = None):
         det = await self.details(query, videoid)
         if not det:
+            LOGGER.error(f"Track: details nahi mile — {query}")
             return None, None
-        
+
         track_details = {
             "title": det[0],
             "link": self.base + det[4],
@@ -197,48 +249,35 @@ class YouTubeAPI:
     ) -> Tuple[Optional[str], bool]:
         if videoid:
             link = self.base + link
-        
+
         m_type = "video" if video else "audio"
 
         # 1. Pehle Direct API try karein
         stream_link = await get_direct_stream_link(link, m_type)
         if stream_link:
+            LOGGER.info(f"[download] API se mila: {link[:50]}")
             return stream_link, True
 
-        # 2. Agar API fail ho toh yt-dlp use karein (With Bypass Headers)
+        # 2. ✅ FIX: yt-dlp with multiple player clients
         try:
-            fmt = "bestaudio/best" if not video else "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
-            
-            ydl_opts = {
-                "format": fmt,
-                "quiet": True,
-                "no_warnings": True,
-                "geo_bypass": True,
-                "nocheckcertificate": True,
-                "noplaylist": True,
-                # YouTube Bot Blocking bypass karne ke liye headers
-                "headers": {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                    "Accept-Language": "en-US,en;q=0.5",
-                    "Referer": "https://www.google.com/",
-                }
-            }
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = await asyncio.to_thread(ydl.extract_info, link, download=False)
-                if not info:
-                    return None, False
+            fmt = (
+                "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+                if video else "bestaudio/best"
+            )
+            info = await _extract_info_with_fallback(link, fmt=fmt)
+            if not info:
+                LOGGER.error(f"[download] Saari strategies fail: {link}")
+                return None, False
 
             url = extract_url_from_info(info, prefer_video=bool(video))
-            
             if url and len(url) > 10:
                 return url, True
 
         except Exception as e:
-            LOGGER.error(f"yt-dlp final error: {e}")
+            LOGGER.error(f"[download] Unexpected error: {e}")
 
         return None, False
+
 
 # Global Instance
 YouTube = YouTubeAPI()
