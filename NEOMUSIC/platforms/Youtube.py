@@ -83,6 +83,8 @@ async def get_direct_stream_link(link: str, media_type: str) -> Optional[str]:
     video_id = get_clean_id(link)
     if not video_id:
         return None
+    # Full YouTube URL banao API ke liye
+    full_url = f"https://www.youtube.com/watch?v={video_id}"
     try:
         timeout = aiohttp.ClientTimeout(total=10)
         async with aiohttp.ClientSession(
@@ -90,7 +92,7 @@ async def get_direct_stream_link(link: str, media_type: str) -> Optional[str]:
         ) as session:
             async with session.get(
                 f"{API_URL}/download",
-                params={"url": video_id, "type": media_type}
+                params={"url": full_url, "type": media_type}  # ✅ Full URL pass karo
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
