@@ -13,8 +13,7 @@ from NEOMUSIC.utils.exceptions import AssistantErr
 from NEOMUSIC.utils.inline import aq_markup, close_markup, stream_markup
 from NEOMUSIC.utils.pastebin import AnonyBin
 from NEOMUSIC.utils.stream.queue import put_queue, put_queue_index
-from NEOMUSIC.utils.thumbnails import get_thumb
-
+from NEOMUSIC.utils.thumbnails import gen_thumb as get_thumb
 
 async def stream(
     _,
