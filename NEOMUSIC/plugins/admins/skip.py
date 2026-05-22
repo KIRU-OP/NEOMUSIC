@@ -8,7 +8,7 @@ from NEOMUSIC.misc import db
 from NEOMUSIC.utils.database import get_loop
 from NEOMUSIC.utils.decorators import AdminRightsCheck
 from NEOMUSIC.utils.inline import close_markup, stream_markup
-from NEOMUSIC.utils.thumbnails import get_thumb
+from NEOMUSIC.utils.thumbnails import gen_thumb as get_thumb
 from config import BANNED_USERS,autoclean
 
 
