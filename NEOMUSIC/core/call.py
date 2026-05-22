@@ -44,7 +44,7 @@ async def _clear_(chat_id: int):
     await remove_active_chat(chat_id)
 
 
-class Call(PyTgCalls):
+class Call:
     def __init__(self):
         PyTgCallsSession.notice_displayed = True
 
@@ -560,5 +560,3 @@ class Call(PyTgCalls):
                 return await mystic.edit_text(
                     _["call_6"], disable_web_page_preview=True
                 )
-
-Anony = Call()
