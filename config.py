@@ -24,8 +24,8 @@ MONGO_DB_URI = getenv("MONGO_DB_URI", None)
 BOT_DOCS =  getenv("BOT_DOCS", "https://radha-music.vercel.app")
 MINI_APP =  getenv("MINI_APP", "https://heroku-club.vercel.app")
 
-BASE_API_URL = getenv("BASE_API_URL", "https://youtube-mini.up.railway.app")
-BASE_API_KEY = getenv("BASE_API_KEY", "")
+BASE_API_URL = getenv("BASE_API_URL", "https://t.me/VibeBots")
+BASE_API_KEY = getenv("BASE_API_KEY", "VibeBots_RsszUDPo1HjFWIsPqih")
 
 COOKIES_URL = getenv("COOKIES_URL", None)
 
