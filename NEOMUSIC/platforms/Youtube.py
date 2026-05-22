@@ -84,7 +84,7 @@ async def get_direct_stream_link(link: str, media_type: str) -> Optional[str]:
     if not video_id:
         return None
     # Full YouTube URL banao API ke liye
-    full_url = f"https://www.youtube.com/watch?v={video_id}"
+    full_url = f"https://youtube-mini.up.railway.app/watch?v={video_id}"
     try:
         timeout = aiohttp.ClientTimeout(total=10)
         async with aiohttp.ClientSession(
