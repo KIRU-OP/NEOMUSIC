@@ -1,8 +1,9 @@
 import asyncio
-
-from pyrogram import filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup,CallbackQuery
+from pyrogram import Client, filters
+from pyrogram.errors import MessageDeleteForbidden, ChatAdminRequired # ये दो एक्सेप्शन्स जिन्हें हम हैंडल करेंगे
 
+from NEOMUSIC.utils.database import get_assistant
 from NEOMUSIC import YouTube, app
 from NEOMUSIC.core.call import Anony
 from NEOMUSIC.misc import SUDOERS, db
@@ -20,7 +21,7 @@ from NEOMUSIC.utils.database import (
 from NEOMUSIC.utils.decorators.language import languageCB
 from NEOMUSIC.utils.formatters import seconds_to_min
 from NEOMUSIC.utils.inline import close_markup, stream_markup, stream_markup_timer
-from NEOMUSIC.utils.thumbnails import gen_thumb as get_thumb
+from NEOMUSIC.utils.thumbnails import get_thumb
 from config import (
     BANNED_USERS,
     SOUNCLOUD_IMG_URL,
@@ -37,6 +38,27 @@ from strings import get_string
 
 checker = {}
 upvoters = {}
+
+
+@app.on_callback_query(filters.regex("unban_assistant"))
+async def unban_assistant(_, callback: CallbackQuery):
+    chat_id = callback.message.chat.id
+    userbot = await get_assistant(chat_id)
+    
+    try:
+        await app.unban_chat_member(chat_id, userbot.id)
+        await callback.answer(
+            "❖ ᴍʏ ᴀssɪsᴛᴀɴᴛ ɪᴅ ᴜɴʙᴀɴɴᴇᴅ sᴜᴄᴄᴇssғᴜʟʟʏ\n\n"
+            "● ɴᴏᴡ ʏᴏᴜ ᴄᴀɴ ᴘʟᴀʏ sᴏɴɢs\n\n"
+            "● ᴛʜᴀɴᴋ ʏᴏᴜ ᴅᴀʀʟɪɴɢ", 
+            show_alert=True
+        )
+    except Exception as e:
+        await callback.answer(
+            "❖ ғᴀɪʟᴇᴅ ᴛᴏ ᴜɴʙᴀɴ ᴍʏ ᴀssɪsᴛᴀɴᴛ ʙᴇᴄᴀᴜsᴇ ɪ ᴅᴏɴᴛ ʜᴀᴠᴇ ʙᴀɴ ᴘᴏᴡᴇʀ\n\n"
+            "● ᴘʟᴇᴀsᴇ ᴘʀᴏᴠɪᴅᴇ ᴍᴇ ʙᴀɴ ᴘᴏᴡᴇʀ sᴏ ᴛʜᴀᴛ 𝖨 ᴄᴀɴ ᴜɴʙᴀɴ ᴍʏ ᴀssɪsᴛᴀɴᴛ ɪᴅ", 
+            show_alert=True
+        )
 
 
 @app.on_callback_query(filters.regex("ADMIN") & ~BANNED_USERS)
@@ -85,16 +107,50 @@ async def del_back_playlist(client, CallbackQuery:CallbackQuery, _):
                 exists = confirmer[chat_id][CallbackQuery.message.id]
                 current = db[chat_id][0]
             except:
-                return await CallbackQuery.edit_message_text(f"ғᴀɪʟᴇᴅ.")
+                # 5 सेकंड बाद डिलीट करने के लिए, परमिशन हैंडलिंग के साथ:
+                msg = await CallbackQuery.edit_message_text(f"फ़ेल हुआ।")
+                await asyncio.sleep(5)
+                try:
+                    await msg.delete() # या CallbackQuery.message.delete()
+                except (MessageDeleteForbidden, ChatAdminRequired):
+                    pass # परमिशन न होने पर चुपचाप इग्नोर करें
+                return
             try:
                 if current["vidid"] != exists["vidid"]:
-                    return await CallbackQuery.edit_message_text(_["admin_35"])
+                    # 5 सेकंड बाद डिलीट करने के लिए, परमिशन हैंडलिंग के साथ:
+                    msg = await CallbackQuery.edit_message_text(_["admin_35"])
+                    await asyncio.sleep(5)
+                    try:
+                        await msg.delete()
+                    except (MessageDeleteForbidden, ChatAdminRequired):
+                        pass
+                    return
                 if current["file"] != exists["file"]:
-                    return await CallbackQuery.edit_message_text(_["admin_35"])
+                    # 5 सेकंड बाद डिलीट करने के लिए, परमिशन हैंडलिंग के साथ:
+                    msg = await CallbackQuery.edit_message_text(_["admin_35"])
+                    await asyncio.sleep(5)
+                    try:
+                        await msg.delete()
+                    except (MessageDeleteForbidden, ChatAdminRequired):
+                        pass
+                    return
             except:
-                return await CallbackQuery.edit_message_text(_["admin_36"])
+                # 5 सेकंड बाद डिलीट करने के लिए, परमिशन हैंडलिंग के साथ:
+                msg = await CallbackQuery.edit_message_text(_["admin_36"])
+                await asyncio.sleep(5)
+                try:
+                    await msg.delete()
+                except (MessageDeleteForbidden, ChatAdminRequired):
+                    pass
+                return
             try:
-                await CallbackQuery.edit_message_text(_["admin_37"].format(upvote))
+                # 5 सेकंड बाद डिलीट करने के लिए, परमिशन हैंडलिंग के साथ:
+                msg = await CallbackQuery.edit_message_text(_["admin_37"].format(upvote))
+                await asyncio.sleep(5)
+                try:
+                    await msg.delete()
+                except (MessageDeleteForbidden, ChatAdminRequired):
+                    pass
             except:
                 pass
             command = counter
@@ -118,7 +174,14 @@ async def del_back_playlist(client, CallbackQuery:CallbackQuery, _):
                 ]
             )
             await CallbackQuery.answer(_["admin_40"], show_alert=True)
-            return await CallbackQuery.edit_message_reply_markup(reply_markup=upl)
+            # 5 सेकंड बाद डिलीट करने के लिए, परमिशन हैंडलिंग के साथ:
+            msg = await CallbackQuery.edit_message_reply_markup(reply_markup=upl)
+            await asyncio.sleep(5)
+            try:
+                await msg.delete() # या CallbackQuery.message.delete()
+            except (MessageDeleteForbidden, ChatAdminRequired):
+                pass
+            return
     else:
         is_non_admin = await is_nonadmin_chat(CallbackQuery.message.chat.id)
         if not is_non_admin:
@@ -137,30 +200,52 @@ async def del_back_playlist(client, CallbackQuery:CallbackQuery, _):
         await CallbackQuery.answer()
         await music_off(chat_id)
         await Anony.pause_stream(chat_id)
-        await CallbackQuery.message.reply_text(
+        # 5 सेकंड बाद डिलीट करने के लिए, परमिशन हैंडलिंग के साथ:
+        msg = await CallbackQuery.message.reply_text(
             _["admin_2"].format(mention), reply_markup=close_markup(_)
         )
+        await asyncio.sleep(5)
+        try:
+            await msg.delete()
+        except (MessageDeleteForbidden, ChatAdminRequired):
+            pass
     elif command == "Resume":
         if await is_music_playing(chat_id):
             return await CallbackQuery.answer(_["admin_3"], show_alert=True)
         await CallbackQuery.answer()
         await music_on(chat_id)
         await Anony.resume_stream(chat_id)
-        await CallbackQuery.message.reply_text(
+        # 5 सेकंड बाद डिलीट करने के लिए, परमिशन हैंडलिंग के साथ:
+        msg = await CallbackQuery.message.reply_text(
             _["admin_4"].format(mention), reply_markup=close_markup(_)
         )
+        await asyncio.sleep(5)
+        try:
+            await msg.delete()
+        except (MessageDeleteForbidden, ChatAdminRequired):
+            pass
     elif command == "Stop" or command == "End":
         await CallbackQuery.answer()
         await Anony.stop_stream(chat_id)
         await set_loop(chat_id, 0)
-        await CallbackQuery.message.reply_text(
+        # 5 सेकंड बाद डिलीट करने के लिए, परमिशन हैंडलिंग के साथ:
+        msg = await CallbackQuery.message.reply_text(
             _["admin_5"].format(mention), reply_markup=close_markup(_)
         )
-        await CallbackQuery.message.delete()
+        await asyncio.sleep(5)
+        try:
+            await msg.delete()
+        except (MessageDeleteForbidden, ChatAdminRequired):
+            pass
+        # Original message को डिलीट करें, परमिशन हैंडलिंग के साथ
+        try:
+            await CallbackQuery.message.delete()
+        except (MessageDeleteForbidden, ChatAdminRequired):
+            pass
     elif command == "Skip" or command == "Replay":
         check = db.get(chat_id)
         if command == "Skip":
-            txt = f"➻ Stream skipped by : {mention}"
+            txt = f"⏮️ sᴛʀᴇᴀᴍ sᴋɪᴩᴩᴇᴅ └ʙʏ : {mention}"
             popped = None
             try:
                 popped = check.pop(0)
@@ -168,35 +253,59 @@ async def del_back_playlist(client, CallbackQuery:CallbackQuery, _):
                     rem = popped["file"]
                     autoclean.remove(rem)
                 if not check:
-                    await CallbackQuery.edit_message_text(
-                        f"➻ Stream skipped by : {mention}"
+                    # 5 सेकंड बाद डिलीट करने के लिए, परमिशन हैंडलिंग के साथ:
+                    msg_edited = await CallbackQuery.edit_message_text(
+                        f"⏮️ sᴛʀᴇᴀᴍ sᴋɪᴩᴩᴇᴅ └ʙʏ : {mention}"
                     )
-                    await CallbackQuery.message.reply_text(
+                    await asyncio.sleep(5)
+                    try:
+                        await msg_edited.delete()
+                    except (MessageDeleteForbidden, ChatAdminRequired):
+                        pass
+
+                    msg_reply = await CallbackQuery.message.reply_text(
                         text=_["admin_6"].format(
                             mention, CallbackQuery.message.chat.title
                         ),
                         reply_markup=close_markup(_),
                     )
+                    await asyncio.sleep(5)
+                    try:
+                        await msg_reply.delete()
+                    except (MessageDeleteForbidden, ChatAdminRequired):
+                        pass
                     try:
                         return await Anony.stop_stream(chat_id)
                     except:
                         return
             except:
                 try:
-                    await CallbackQuery.edit_message_text(
-                        f"➻ Stream skipped by : {mention}"
+                    # 5 सेकंड बाद डिलीट करने के लिए, परमिशन हैंडलिंग के साथ:
+                    msg_edited = await CallbackQuery.edit_message_text(
+                        f"⏮️ sᴛʀᴇᴀᴍ sᴋɪᴩᴩᴇᴅ └ʙʏ : {mention}"
                     )
-                    await CallbackQuery.message.reply_text(
+                    await asyncio.sleep(5)
+                    try:
+                        await msg_edited.delete()
+                    except (MessageDeleteForbidden, ChatAdminRequired):
+                        pass
+
+                    msg_reply = await CallbackQuery.message.reply_text(
                         text=_["admin_6"].format(
                             mention, CallbackQuery.message.chat.title
                         ),
                         reply_markup=close_markup(_),
                     )
+                    await asyncio.sleep(5)
+                    try:
+                        await msg_reply.delete()
+                    except (MessageDeleteForbidden, ChatAdminRequired):
+                        pass
                     return await Anony.stop_stream(chat_id)
                 except:
                     return
         else:
-            txt = f"➻ Stream Re-Played by : {mention}"
+            txt = f"🔁 sᴛʀᴇᴀᴍ ʀᴇ-ᴘʟᴀʏᴇᴅ └ʙʏ : {mention}"
         await CallbackQuery.answer()
         queued = check[0]["file"]
         title = (check[0]["title"]).title()
@@ -216,10 +325,17 @@ async def del_back_playlist(client, CallbackQuery:CallbackQuery, _):
         if "live_" in queued:
             n, link = await YouTube.video(videoid, True)
             if n == 0:
-                return await CallbackQuery.message.reply_text(
+                # 5 सेकंड बाद डिलीट करने के लिए, परमिशन हैंडलिंग के साथ:
+                msg = await CallbackQuery.message.reply_text(
                     text=_["admin_7"].format(title),
                     reply_markup=close_markup(_),
                 )
+                await asyncio.sleep(5)
+                try:
+                    await msg.delete()
+                except (MessageDeleteForbidden, ChatAdminRequired):
+                    pass
+                return
             try:
                 image = await YouTube.thumbnail(videoid, True)
             except:
@@ -227,12 +343,18 @@ async def del_back_playlist(client, CallbackQuery:CallbackQuery, _):
             try:
                 await Anony.skip_stream(chat_id, link, video=status, image=image)
             except:
-                return await CallbackQuery.message.reply_text(_["call_6"])
+                # 5 सेकंड बाद डिलीट करने के लिए, परमिशन हैंडलिंग के साथ:
+                msg = await CallbackQuery.message.reply_text(_["call_6"])
+                await asyncio.sleep(5)
+                try:
+                    await msg.delete()
+                except (MessageDeleteForbidden, ChatAdminRequired):
+                    pass
+                return
             button = stream_markup(_, chat_id)
             img = await get_thumb(videoid)
             run = await CallbackQuery.message.reply_photo(
                 photo=img,
-                has_spoiler=True,
                 caption=_["stream_1"].format(
                     f"https://t.me/{app.username}?start=info_{videoid}",
                     title[:23],
@@ -243,7 +365,13 @@ async def del_back_playlist(client, CallbackQuery:CallbackQuery, _):
             )
             db[chat_id][0]["mystic"] = run
             db[chat_id][0]["markup"] = "tg"
-            await CallbackQuery.edit_message_text(txt, reply_markup=close_markup(_))
+            # 5 सेकंड बाद डिलीट करने के लिए, परमिशन हैंडलिंग के साथ:
+            msg = await CallbackQuery.edit_message_text(txt, reply_markup=close_markup(_))
+            await asyncio.sleep(5)
+            try:
+                await msg.delete() # या CallbackQuery.message.delete()
+            except (MessageDeleteForbidden, ChatAdminRequired):
+                pass
         elif "vid_" in queued:
             mystic = await CallbackQuery.message.reply_text(
                 _["call_7"], disable_web_page_preview=True
@@ -256,7 +384,14 @@ async def del_back_playlist(client, CallbackQuery:CallbackQuery, _):
                     video=status,
                 )
             except:
-                return await mystic.edit_text(_["call_6"])
+                # 5 सेकंड बाद डिलीट करने के लिए, परमिशन हैंडलिंग के साथ:
+                msg = await mystic.edit_text(_["call_6"])
+                await asyncio.sleep(5)
+                try:
+                    await msg.delete()
+                except (MessageDeleteForbidden, ChatAdminRequired):
+                    pass
+                return
             try:
                 image = await YouTube.thumbnail(videoid, True)
             except:
@@ -264,12 +399,18 @@ async def del_back_playlist(client, CallbackQuery:CallbackQuery, _):
             try:
                 await Anony.skip_stream(chat_id, file_path, video=status, image=image)
             except:
-                return await mystic.edit_text(_["call_6"])
+                # 5 सेकंड बाद डिलीट करने के लिए, परमिशन हैंडलिंग के साथ:
+                msg = await mystic.edit_text(_["call_6"])
+                await asyncio.sleep(5)
+                try:
+                    await msg.delete()
+                except (MessageDeleteForbidden, ChatAdminRequired):
+                    pass
+                return
             button = stream_markup(_, chat_id)
             img = await get_thumb(videoid)
             run = await CallbackQuery.message.reply_photo(
                 photo=img,
-                has_spoiler=True,
                 caption=_["stream_1"].format(
                     f"https://t.me/{app.username}?start=info_{videoid}",
                     title[:23],
@@ -280,23 +421,45 @@ async def del_back_playlist(client, CallbackQuery:CallbackQuery, _):
             )
             db[chat_id][0]["mystic"] = run
             db[chat_id][0]["markup"] = "stream"
-            await CallbackQuery.edit_message_text(txt, reply_markup=close_markup(_))
-            await mystic.delete()
+            # 5 सेकंड बाद डिलीट करने के लिए, परमिशन हैंडलिंग के साथ:
+            msg = await CallbackQuery.edit_message_text(txt, reply_markup=close_markup(_))
+            await asyncio.sleep(5)
+            try:
+                await msg.delete() # या CallbackQuery.message.delete()
+            except (MessageDeleteForbidden, ChatAdminRequired):
+                pass
+            # mystic को तुरंत डिलीट करें, परमिशन हैंडलिंग के साथ
+            try:
+                await mystic.delete()
+            except (MessageDeleteForbidden, ChatAdminRequired):
+                pass
         elif "index_" in queued:
             try:
                 await Anony.skip_stream(chat_id, videoid, video=status)
             except:
-                return await CallbackQuery.message.reply_text(_["call_6"])
+                # 5 सेकंड बाद डिलीट करने के लिए, परमिशन हैंडलिंग के साथ:
+                msg = await CallbackQuery.message.reply_text(_["call_6"])
+                await asyncio.sleep(5)
+                try:
+                    await msg.delete()
+                except (MessageDeleteForbidden, ChatAdminRequired):
+                    pass
+                return
             button = stream_markup(_, chat_id)
             run = await CallbackQuery.message.reply_photo(
                 photo=STREAM_IMG_URL,
-                has_spoiler=True,
                 caption=_["stream_2"].format(user),
                 reply_markup=InlineKeyboardMarkup(button),
             )
             db[chat_id][0]["mystic"] = run
             db[chat_id][0]["markup"] = "tg"
-            await CallbackQuery.edit_message_text(txt, reply_markup=close_markup(_))
+            # 5 सेकंड बाद डिलीट करने के लिए, परमिशन हैंडलिंग के साथ:
+            msg = await CallbackQuery.edit_message_text(txt, reply_markup=close_markup(_))
+            await asyncio.sleep(5)
+            try:
+                await msg.delete() # या CallbackQuery.message.delete()
+            except (MessageDeleteForbidden, ChatAdminRequired):
+                pass
         else:
             if videoid == "telegram":
                 image = None
@@ -310,7 +473,14 @@ async def del_back_playlist(client, CallbackQuery:CallbackQuery, _):
             try:
                 await Anony.skip_stream(chat_id, queued, video=status, image=image)
             except:
-                return await CallbackQuery.message.reply_text(_["call_6"])
+                # 5 सेकंड बाद डिलीट करने के लिए, परमिशन हैंडलिंग के साथ:
+                msg = await CallbackQuery.message.reply_text(_["call_6"])
+                await asyncio.sleep(5)
+                try:
+                    await msg.delete()
+                except (MessageDeleteForbidden, ChatAdminRequired):
+                    pass
+                return
             if videoid == "telegram":
                 button = stream_markup(_, chat_id)
                 run = await CallbackQuery.message.reply_photo(
@@ -342,7 +512,6 @@ async def del_back_playlist(client, CallbackQuery:CallbackQuery, _):
                 img = await get_thumb(videoid)
                 run = await CallbackQuery.message.reply_photo(
                     photo=img,
-                    has_spoiler=True,
                     caption=_["stream_1"].format(
                         f"https://t.me/{app.username}?start=info_{videoid}",
                         title[:23],
@@ -353,7 +522,13 @@ async def del_back_playlist(client, CallbackQuery:CallbackQuery, _):
                 )
                 db[chat_id][0]["mystic"] = run
                 db[chat_id][0]["markup"] = "stream"
-            await CallbackQuery.edit_message_text(txt, reply_markup=close_markup(_))
+            # 5 सेकंड बाद डिलीट करने के लिए, परमिशन हैंडलिंग के साथ:
+            msg = await CallbackQuery.edit_message_text(txt, reply_markup=close_markup(_))
+            await asyncio.sleep(5)
+            try:
+                await msg.delete() # या CallbackQuery.message.delete()
+            except (MessageDeleteForbidden, ChatAdminRequired):
+                pass
 
 
 async def markup_timer():
