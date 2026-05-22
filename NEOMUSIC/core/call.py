@@ -560,3 +560,5 @@ class Call(PyTgCalls):
                 return await mystic.edit_text(
                     _["call_6"], disable_web_page_preview=True
                 )
+
+Anony = Call()
